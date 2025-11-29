@@ -1,9 +1,15 @@
 """Debug visualization utilities for frame detection."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
+
+if TYPE_CHECKING:
+    from models import FrameBounds, Line, Margins
 
 
 class DebugVisualizer:
@@ -193,32 +199,31 @@ class DebugVisualizer:
         fig.savefig(self.output_dir / f"{self.step:02d}_edges_variations.png", dpi=150)
         plt.close(fig)
 
-    def save_lines(self, img: np.ndarray, lines: np.ndarray):
+    def save_lines(self, img: np.ndarray, lines: list[Line]):
         """Save image with all detected lines drawn."""
         vis = img.copy()
-        for x1, y1, x2, y2 in lines[:, 0, :]:
-            cv2.line(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        for line in lines:
+            cv2.line(vis, (line.x1, line.y1), (line.x2, line.y2), (0, 255, 0), 2)
         self._save("lines_all", vis)
 
     def save_ignore_margin(
         self,
         img: np.ndarray,
-        ignore_margins: tuple[float, float, float, float],
+        ignore_margins: Margins,
     ):
         """Save visualization of ignored margins.
 
         Args:
             img: Original image before cropping
-            ignore_margins: (top, right, bottom, left) fractions
+            ignore_margins: Margins object with (top, right, bottom, left) fractions
         """
         vis = img.copy()
         img_h, img_w = img.shape[:2]
-        top_m, right_m, bottom_m, left_m = ignore_margins
 
-        ignore_top = int(img_h * top_m)
-        ignore_bottom = int(img_h * bottom_m)
-        ignore_left = int(img_w * left_m)
-        ignore_right = int(img_w * right_m)
+        ignore_top = int(img_h * ignore_margins.top)
+        ignore_bottom = int(img_h * ignore_margins.bottom)
+        ignore_left = int(img_w * ignore_margins.left)
+        ignore_right = int(img_w * ignore_margins.right)
 
         overlay = vis.copy()
         # Shade ignored regions in red
@@ -248,22 +253,21 @@ class DebugVisualizer:
     def save_edge_margins(
         self,
         img: np.ndarray,
-        edge_margins: tuple[float, float, float, float],
+        edge_margins: Margins,
     ):
         """Save visualization of edge margin zones for line detection.
 
         Args:
             img: Image being analyzed
-            edge_margins: (top, right, bottom, left) fractions
+            edge_margins: Margins object with (top, right, bottom, left) fractions
         """
         vis = img.copy()
         img_h, img_w = img.shape[:2]
-        top_m, right_m, bottom_m, left_m = edge_margins
 
-        y_top = int(img_h * top_m)
-        y_bottom = int(img_h * (1 - bottom_m))
-        x_left = int(img_w * left_m)
-        x_right = int(img_w * (1 - right_m))
+        y_top = int(img_h * edge_margins.top)
+        y_bottom = int(img_h * (1 - edge_margins.bottom))
+        x_left = int(img_w * edge_margins.left)
+        x_right = int(img_w * (1 - edge_margins.right))
 
         overlay = vis.copy()
         # Shade edge zones in green (where lines are considered)
@@ -286,28 +290,36 @@ class DebugVisualizer:
     def save_classified_lines(
         self,
         img: np.ndarray,
-        lines: np.ndarray,
-        horiz_positions: list[int],
-        vert_positions: list[int],
+        frame_bounds: FrameBounds,
     ):
-        """Save image with lines colored by classification."""
+        """Save image with lines colored by edge classification."""
         vis = img.copy()
-        for x1, y1, x2, y2 in lines[:, 0, :]:
-            angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
-            if abs(angle) < 20:  # horizontal - blue
-                cv2.line(vis, (x1, y1), (x2, y2), (255, 0, 0), 2)
-            elif abs(angle - 90) < 20 or abs(angle + 90) < 20:  # vertical - red
-                cv2.line(vis, (x1, y1), (x2, y2), (0, 0, 255), 2)
-            else:  # other - gray
-                cv2.line(vis, (x1, y1), (x2, y2), (128, 128, 128), 1)
 
-        # Draw detected edge positions as dotted lines
-        for y in horiz_positions:
-            for x in range(0, vis.shape[1], 10):
-                cv2.circle(vis, (x, y), 1, (255, 100, 0), -1)
-        for x in vert_positions:
-            for y in range(0, vis.shape[0], 10):
-                cv2.circle(vis, (x, y), 1, (0, 100, 255), -1)
+        # Define colors for each edge
+        colors = {
+            "top": (255, 0, 0),      # Blue
+            "bottom": (255, 128, 0),  # Light blue
+            "left": (0, 0, 255),      # Red
+            "right": (0, 128, 255),   # Orange
+        }
+
+        # Draw lines for each edge group
+        for edge_name, edge_group in [
+            ("top", frame_bounds.top),
+            ("bottom", frame_bounds.bottom),
+            ("left", frame_bounds.left),
+            ("right", frame_bounds.right),
+        ]:
+            color = colors[edge_name]
+            for line in edge_group.lines:
+                cv2.line(vis, (line.x1, line.y1), (line.x2, line.y2), color, 2)
+
+        # Add legend
+        y_offset = 30
+        for edge_name, color in colors.items():
+            count = len(getattr(frame_bounds, edge_name).lines)
+            cv2.putText(vis, f"{edge_name}: {count}", (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+            y_offset += 30
 
         self._save("lines_classified", vis)
 

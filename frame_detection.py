@@ -7,11 +7,13 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
+from models import EdgeGroup, FrameBounds, Line, Margins
+
 if TYPE_CHECKING:
     from debug_visualizer import DebugVisualizer
 
-# Edge indices for bounds and certainties arrays
-LEFT, RIGHT, TOP, BOTTOM = 0, 1, 2, 3
+# Re-export for backwards compatibility
+parse_edge_margins = Margins.parse
 
 
 def detect_sprocket_holes(
@@ -151,7 +153,7 @@ def crop_sprocket_region(
 
 def detect_lines(
     img: np.ndarray, visualizer: DebugVisualizer | None = None
-) -> tuple[np.ndarray | None, int, int]:
+) -> tuple[list[Line], int, int]:
     """Detect lines in an image using Canny edge detection and Hough transform.
 
     Internally crops sprocket hole regions before edge detection, then adjusts
@@ -190,7 +192,7 @@ def detect_lines(
         visualizer.save_edges_variations(blurred, median, low_factor, high_factor)
 
     min_dim = min(img_cropped.shape[:2])
-    lines = cv2.HoughLinesP(
+    raw_lines = cv2.HoughLinesP(
         edges,
         1,
         np.pi / 180,
@@ -199,132 +201,68 @@ def detect_lines(
         maxLineGap=min_dim // 10,
     )
 
-    # Adjust line coordinates back to original image space
-    if lines is not None and y_offset_top > 0:
-        lines[:, :, 1] += y_offset_top  # y1
-        lines[:, :, 3] += y_offset_top  # y2
+    if raw_lines is None:
+        return [], y_min, y_max
 
-    if visualizer and lines is not None:
+    # Convert to Line objects and adjust coordinates back to original image space
+    lines = []
+    for line_data in raw_lines[:, 0, :]:
+        line = Line.from_hough(line_data)
+        if y_offset_top > 0:
+            line = line.offset_y(y_offset_top)
+        lines.append(line)
+
+    if visualizer:
         visualizer.save_lines(img, lines)
 
     return lines, y_min, y_max
 
 
-def parse_edge_margins(value: str) -> tuple[float, float, float, float]:
-    """Parse edge margin string into (top, right, bottom, left) values.
-
-    Supports formats:
-        - Single value: "30" -> all edges 30%
-        - Two values: "30,40" -> vertical 30%, horizontal 40%
-        - Four values: "30,40,50,10" -> top, right, bottom, left
-
-    Separators: , : / ;
-
-    Returns:
-        Tuple of (top, right, bottom, left) as fractions (0-1)
-    """
-    import re
-
-    parts = re.split(r"[/:,;]", value)
-    parts = [float(p) / 100 for p in parts]
-
-    if len(parts) == 1:
-        return (parts[0], parts[0], parts[0], parts[0])
-    elif len(parts) == 2:
-        # vertical, horizontal
-        return (parts[0], parts[1], parts[0], parts[1])
-    elif len(parts) == 4:
-        # top, right, bottom, left
-        return (parts[0], parts[1], parts[2], parts[3])
-    else:
-        raise ValueError(f"Invalid edge margin format: {value}")
-
-
 def classify_lines(
-    lines: np.ndarray,
+    lines: list[Line],
     img_h: int,
     img_w: int,
-    edge_margins: tuple[float, float, float, float] = (0.3, 0.3, 0.3, 0.3),
-) -> tuple[list[int], list[int]]:
-    """Classify lines as horizontal or vertical based on slope.
+    edge_margins: Margins,
+) -> FrameBounds:
+    """Classify lines into edge groups based on position and orientation.
 
     Only considers lines near the edges of the image to avoid false positives
     from image content in the middle.
 
     Args:
-        lines: Detected lines from Hough transform
+        lines: Detected Line objects
         img_h: Image height
         img_w: Image width
-        edge_margins: (top, right, bottom, left) fractions for edge regions (0-0.5)
+        edge_margins: Margins defining edge detection regions
 
     Returns:
-        Tuple of (horizontal y-positions, vertical x-positions)
+        FrameBounds with lines grouped by edge
     """
-    horiz_positions = []
-    vert_positions = []
+    frame_bounds = FrameBounds()
 
-    # tan(20°) ≈ 0.36 - lines within 20° of axis are classified
-    slope_threshold = 0.36
+    y_top_thresh = int(img_h * edge_margins.top)
+    y_bottom_thresh = int(img_h * (1 - edge_margins.bottom))
+    x_left_thresh = int(img_w * edge_margins.left)
+    x_right_thresh = int(img_w * (1 - edge_margins.right))
 
-    top_margin, right_margin, bottom_margin, left_margin = edge_margins
-    y_top_thresh = int(img_h * top_margin)
-    y_bottom_thresh = int(img_h * (1 - bottom_margin))
-    x_left_thresh = int(img_w * left_margin)
-    x_right_thresh = int(img_w * (1 - right_margin))
+    mid_y = img_h / 2
+    mid_x = img_w / 2
 
-    for x1, y1, x2, y2 in lines[:, 0, :]:
-        dx = abs(x2 - x1)
-        dy = abs(y2 - y1)
-        avg_y = (y1 + y2) // 2
-        avg_x = (x1 + x2) // 2
+    for line in lines:
+        if line.is_horizontal:
+            # Classify as top or bottom based on position
+            if line.avg_y < y_top_thresh:
+                frame_bounds.top.add(line)
+            elif line.avg_y > y_bottom_thresh:
+                frame_bounds.bottom.add(line)
+        elif line.is_vertical:
+            # Classify as left or right based on position
+            if line.avg_x < x_left_thresh:
+                frame_bounds.left.add(line)
+            elif line.avg_x > x_right_thresh:
+                frame_bounds.right.add(line)
 
-        if dy <= dx * slope_threshold:  # near horizontal
-            # Only include if near top or bottom edge
-            if avg_y < y_top_thresh or avg_y > y_bottom_thresh:
-                horiz_positions.extend([y1, y2])
-        elif dx <= dy * slope_threshold:  # near vertical
-            # Only include if near left or right edge
-            if avg_x < x_left_thresh or avg_x > x_right_thresh:
-                vert_positions.extend([x1, x2])
-
-    return horiz_positions, vert_positions
-
-
-def resolve_axis(
-    positions: list[int],
-    img_size: int,
-    other_size: float,
-    aspect_ratio: float,
-    is_width: bool,
-) -> tuple[int, int]:
-    """Resolve two edge positions for an axis from detected positions.
-
-    Returns:
-        Tuple of (low_pos, high_pos)
-    """
-    if len(positions) >= 2:
-        return int(np.min(positions)), int(np.max(positions))
-
-    if len(positions) == 1:
-        edge_pos = int(positions[0])
-        size = (
-            int(round(other_size * aspect_ratio))
-            if is_width
-            else int(round(other_size / aspect_ratio))
-        )
-        # Place edge as start or end based on which is closer to image boundary
-        if edge_pos < img_size // 2:
-            return edge_pos, edge_pos + size
-        else:
-            return edge_pos - size, edge_pos
-
-    # No detection: center a rectangle estimated from other axis
-    size = (
-        int(round(other_size * aspect_ratio))
-        if is_width
-        else int(round(other_size / aspect_ratio))
-    )
-    return (img_size - size) // 2, (img_size + size) // 2
+    return frame_bounds
 
 
 def normalize_levels(
@@ -366,91 +304,97 @@ def normalize_levels(
 
 def apply_crop_in(
     img: np.ndarray,
-    bounds: list[int],
+    left: int,
+    right: int,
+    top: int,
+    bottom: int,
     crop_in_percent: float,
     visualizer: DebugVisualizer | None = None,
-) -> list[int]:
+) -> tuple[int, int, int, int]:
     """Shrink bounds inward by a percentage to exclude unexposed borders.
 
     Args:
         img: Input image (used for visualization)
-        bounds: Array of [left, right, top, bottom] positions
+        left, right, top, bottom: Current bounds
         crop_in_percent: Percentage of each dimension to crop from edges (0-100)
         visualizer: Optional debug visualizer to save intermediate images
 
     Returns:
-        Adjusted bounds with crop-in applied
+        Adjusted bounds (left, right, top, bottom) with crop-in applied
     """
     if crop_in_percent <= 0:
-        return bounds
+        return left, right, top, bottom
 
-    bounds_before = bounds.copy()
-    bounds = bounds.copy()
-    width = bounds[RIGHT] - bounds[LEFT]
-    height = bounds[BOTTOM] - bounds[TOP]
+    bounds_before = [left, right, top, bottom]
+
+    width = right - left
+    height = bottom - top
 
     crop_x = int(width * crop_in_percent / 100)
     crop_y = int(height * crop_in_percent / 100)
 
-    bounds[LEFT] += crop_x
-    bounds[RIGHT] -= crop_x
-    bounds[TOP] += crop_y
-    bounds[BOTTOM] -= crop_y
+    left += crop_x
+    right -= crop_x
+    top += crop_y
+    bottom -= crop_y
 
     if visualizer:
-        visualizer.save_crop_in(img, bounds_before, bounds, crop_in_percent)
+        bounds_after = [left, right, top, bottom]
+        visualizer.save_crop_in(img, bounds_before, bounds_after, crop_in_percent)
 
-    return bounds
+    return left, right, top, bottom
 
 
 def enforce_aspect_ratio(
-    bounds: list[int],
+    left: int,
+    right: int,
+    top: int,
+    bottom: int,
     aspect_ratio: float,
     y_min: int,
     y_max: int,
     img_w: int,
-) -> list[int]:
+) -> tuple[int, int, int, int]:
     """Adjust bounds to enforce the correct aspect ratio.
 
     Shrinks the larger dimension to match the expected aspect ratio,
     keeping the crop centered.
 
     Args:
-        bounds: Array of [left, right, top, bottom] positions
+        left, right, top, bottom: Current bounds
         aspect_ratio: Expected aspect ratio (width/height)
         y_min: Minimum valid y coordinate (sprocket boundary)
         y_max: Maximum valid y coordinate (sprocket boundary)
         img_w: Image width for clamping
 
     Returns:
-        Adjusted bounds with correct aspect ratio
+        Adjusted bounds (left, right, top, bottom) with correct aspect ratio
     """
-    bounds = bounds.copy()
-    width = bounds[RIGHT] - bounds[LEFT]
-    height = bounds[BOTTOM] - bounds[TOP]
+    width = right - left
+    height = bottom - top
     current_ratio = width / height
 
     if current_ratio > aspect_ratio:
         # Too wide - shrink width, center horizontally
         new_width = int(height * aspect_ratio)
         delta = width - new_width
-        bounds[LEFT] += delta // 2
-        bounds[RIGHT] -= delta - delta // 2
+        left += delta // 2
+        right -= delta - delta // 2
 
     elif current_ratio < aspect_ratio:
         # Too tall - shrink height, center vertically
         new_height = int(width / aspect_ratio)
         delta = height - new_height
-        bounds[TOP] += delta // 2
-        bounds[BOTTOM] -= delta - delta // 2
+        top += delta // 2
+        bottom -= delta - delta // 2
 
     # Re-clamp after adjustment
-    bounds[LEFT] = max(0, bounds[LEFT])
-    bounds[RIGHT] = min(img_w, bounds[RIGHT])
-    bounds[TOP] = max(y_min, bounds[TOP])
-    bounds[BOTTOM] = min(y_max, bounds[BOTTOM])
+    left = max(0, left)
+    right = min(img_w, right)
+    top = max(y_min, top)
+    bottom = min(y_max, bottom)
 
-    return bounds
+    return left, right, top, bottom
 
 
 def detect_frame_bounds(
@@ -458,9 +402,9 @@ def detect_frame_bounds(
     aspect_ratio: float,
     visualizer: DebugVisualizer | None = None,
     crop_in_percent: float = 0.0,
-    edge_margins: tuple[float, float, float, float] = (0.3, 0.3, 0.3, 0.3),
-    ignore_margins: tuple[float, float, float, float] = (0.0, 0.05, 0.0, 0.05),
-) -> list[int]:
+    edge_margins: Margins | None = None,
+    ignore_margins: Margins | None = None,
+) -> tuple[FrameBounds, list[int]]:
     """Detect frame boundaries in an image.
 
     Args:
@@ -468,24 +412,27 @@ def detect_frame_bounds(
         aspect_ratio: Expected aspect ratio of the frame (width/height)
         visualizer: Optional debug visualizer to save intermediate images
         crop_in_percent: Percentage to crop inward from edges (0-100)
-        edge_margins: (top, right, bottom, left) fractions for edge detection regions
-        ignore_margins: (top, right, bottom, left) fractions to crop before analysis
+        edge_margins: Margins defining edge detection regions
+        ignore_margins: Margins to crop before analysis
 
     Returns:
-        Array of [left, right, top, bottom] positions
+        Tuple of (FrameBounds object, [left, right, top, bottom] positions)
 
     Raises:
         ValueError: If no lines or frame edges are detected, or invalid bounds
     """
-    orig_img = img
+    if edge_margins is None:
+        edge_margins = Margins(0.3, 0.3, 0.3, 0.3)
+    if ignore_margins is None:
+        ignore_margins = Margins(0.0, 0.05, 0.0, 0.05)
+
     orig_h, orig_w = img.shape[:2]
 
     # Crop out ignored margins before analysis
-    top_margin, right_margin, bottom_margin, left_margin = ignore_margins
-    ignore_top = int(orig_h * top_margin)
-    ignore_bottom = int(orig_h * bottom_margin)
-    ignore_left = int(orig_w * left_margin)
-    ignore_right = int(orig_w * right_margin)
+    ignore_top = int(orig_h * ignore_margins.top)
+    ignore_bottom = int(orig_h * ignore_margins.bottom)
+    ignore_left = int(orig_w * ignore_margins.left)
+    ignore_right = int(orig_w * ignore_margins.right)
 
     if visualizer:
         visualizer.save_ignore_margin(img, ignore_margins)
@@ -500,7 +447,7 @@ def detect_frame_bounds(
     img = normalize_levels(img, visualizer)
 
     lines, y_min, y_max = detect_lines(img, visualizer)
-    if lines is None:
+    if not lines:
         raise ValueError("No lines detected")
 
     img_h, img_w = img.shape[:2]
@@ -508,63 +455,84 @@ def detect_frame_bounds(
     if visualizer:
         visualizer.save_edge_margins(img, edge_margins)
 
-    horiz_positions, vert_positions = classify_lines(lines, img_h, img_w, edge_margins)
+    frame_bounds = classify_lines(lines, img_h, img_w, edge_margins)
 
     if visualizer:
-        visualizer.save_classified_lines(img, lines, horiz_positions, vert_positions)
+        visualizer.save_classified_lines(img, frame_bounds)
 
-    if not horiz_positions and not vert_positions:
-        raise ValueError("No frame edges detected")
+    if not frame_bounds.top.lines and not frame_bounds.bottom.lines:
+        if not frame_bounds.left.lines and not frame_bounds.right.lines:
+            raise ValueError("No frame edges detected")
+
+    # Get positions from edge groups
+    top_positions = [line.avg_y for line in frame_bounds.top.lines]
+    bottom_positions = [line.avg_y for line in frame_bounds.bottom.lines]
+    left_positions = [line.avg_x for line in frame_bounds.left.lines]
+    right_positions = [line.avg_x for line in frame_bounds.right.lines]
 
     # Get raw sizes to help estimate missing axis
     vert_span = (
-        max(vert_positions) - min(vert_positions)
-        if len(vert_positions) >= 2
+        max(right_positions) - min(left_positions)
+        if left_positions and right_positions
         else img_w * 0.8
     )
     horiz_span = (
-        max(horiz_positions) - min(horiz_positions)
-        if len(horiz_positions) >= 2
+        max(bottom_positions) - min(top_positions)
+        if top_positions and bottom_positions
         else img_h * 0.8
     )
 
     # Resolve edge positions
+    def resolve_axis(positions, img_size, other_size, ar, is_width):
+        if len(positions) >= 2:
+            return int(min(positions)), int(max(positions))
+        if len(positions) == 1:
+            edge_pos = int(positions[0])
+            size = int(round(other_size * ar)) if is_width else int(round(other_size / ar))
+            if edge_pos < img_size // 2:
+                return edge_pos, edge_pos + size
+            else:
+                return edge_pos - size, edge_pos
+        size = int(round(other_size * ar)) if is_width else int(round(other_size / ar))
+        return (img_size - size) // 2, (img_size + size) // 2
+
     left, right = resolve_axis(
-        vert_positions, img_w, horiz_span, aspect_ratio, is_width=True
+        left_positions + right_positions, img_w, horiz_span, aspect_ratio, is_width=True
     )
     top, bottom = resolve_axis(
-        horiz_positions, img_h, vert_span, aspect_ratio, is_width=False
+        top_positions + bottom_positions, img_h, vert_span, aspect_ratio, is_width=False
     )
 
-    # Build bounds array: [left, right, top, bottom]
-    bounds = [left, right, top, bottom]
-
     # Clamp coordinates to image bounds (excluding sprocket regions)
-    bounds[LEFT] = max(0, bounds[LEFT])
-    bounds[RIGHT] = min(img_w, bounds[RIGHT])
-    bounds[TOP] = max(y_min, bounds[TOP])
-    bounds[BOTTOM] = min(y_max, bounds[BOTTOM])
+    left = max(0, left)
+    right = min(img_w, right)
+    top = max(y_min, top)
+    bottom = min(y_max, bottom)
 
-    if bounds[RIGHT] <= bounds[LEFT] or bounds[BOTTOM] <= bounds[TOP]:
+    if right <= left or bottom <= top:
         raise ValueError("Invalid frame coordinates detected")
 
     # Apply crop-in to exclude unexposed borders
-    bounds = apply_crop_in(img, bounds, crop_in_percent, visualizer)
+    left, right, top, bottom = apply_crop_in(
+        img, left, right, top, bottom, crop_in_percent, visualizer
+    )
 
     # Enforce correct aspect ratio
-    bounds = enforce_aspect_ratio(bounds, aspect_ratio, y_min, y_max, img_w)
+    left, right, top, bottom = enforce_aspect_ratio(
+        left, right, top, bottom, aspect_ratio, y_min, y_max, img_w
+    )
 
     if visualizer:
-        visualizer.save_bounds(img, bounds)
+        visualizer.save_bounds(img, [left, right, top, bottom])
 
     # Adjust bounds back to original image coordinates
     if ignore_left > 0 or ignore_top > 0:
-        bounds[LEFT] += ignore_left
-        bounds[RIGHT] += ignore_left
-        bounds[TOP] += ignore_top
-        bounds[BOTTOM] += ignore_top
+        left += ignore_left
+        right += ignore_left
+        top += ignore_top
+        bottom += ignore_top
 
-    return bounds
+    return frame_bounds, [left, right, top, bottom]
 
 
 def crop_frame(img: np.ndarray, bounds: list[int]) -> np.ndarray:
@@ -577,4 +545,5 @@ def crop_frame(img: np.ndarray, bounds: list[int]) -> np.ndarray:
     Returns:
         Cropped image as numpy array
     """
-    return img[bounds[TOP]:bounds[BOTTOM], bounds[LEFT]:bounds[RIGHT]]
+    left, right, top, bottom = bounds
+    return img[top:bottom, left:right]
