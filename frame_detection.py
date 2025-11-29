@@ -180,12 +180,14 @@ def detect_lines(
     )  # Scale kernel with resolution, ensure odd
     blurred = cv2.GaussianBlur(gray, (k, k), 0)
     median = np.median(blurred)
-    low = int(max(0, 0.66 * median))
-    high = int(min(255, 1.33 * median))
+    low_factor, high_factor = 0.66, 1.33
+    low = int(max(0, low_factor * median))
+    high = int(min(255, high_factor * median))
     edges = cv2.Canny(blurred, low, high)
 
     if visualizer:
         visualizer.save_edges(edges)
+        visualizer.save_edges_variations(blurred, median, low_factor, high_factor)
 
     min_dim = min(img_cropped.shape[:2])
     lines = cv2.HoughLinesP(
@@ -208,8 +210,52 @@ def detect_lines(
     return lines, y_min, y_max
 
 
-def classify_lines(lines: np.ndarray) -> tuple[list[int], list[int]]:
+def parse_edge_margins(value: str) -> tuple[float, float, float, float]:
+    """Parse edge margin string into (top, right, bottom, left) values.
+
+    Supports formats:
+        - Single value: "30" -> all edges 30%
+        - Two values: "30,40" -> vertical 30%, horizontal 40%
+        - Four values: "30,40,50,10" -> top, right, bottom, left
+
+    Separators: , : / ;
+
+    Returns:
+        Tuple of (top, right, bottom, left) as fractions (0-1)
+    """
+    import re
+
+    parts = re.split(r"[/:,;]", value)
+    parts = [float(p) / 100 for p in parts]
+
+    if len(parts) == 1:
+        return (parts[0], parts[0], parts[0], parts[0])
+    elif len(parts) == 2:
+        # vertical, horizontal
+        return (parts[0], parts[1], parts[0], parts[1])
+    elif len(parts) == 4:
+        # top, right, bottom, left
+        return (parts[0], parts[1], parts[2], parts[3])
+    else:
+        raise ValueError(f"Invalid edge margin format: {value}")
+
+
+def classify_lines(
+    lines: np.ndarray,
+    img_h: int,
+    img_w: int,
+    edge_margins: tuple[float, float, float, float] = (0.3, 0.3, 0.3, 0.3),
+) -> tuple[list[int], list[int]]:
     """Classify lines as horizontal or vertical based on slope.
+
+    Only considers lines near the edges of the image to avoid false positives
+    from image content in the middle.
+
+    Args:
+        lines: Detected lines from Hough transform
+        img_h: Image height
+        img_w: Image width
+        edge_margins: (top, right, bottom, left) fractions for edge regions (0-0.5)
 
     Returns:
         Tuple of (horizontal y-positions, vertical x-positions)
@@ -220,13 +266,26 @@ def classify_lines(lines: np.ndarray) -> tuple[list[int], list[int]]:
     # tan(20°) ≈ 0.36 - lines within 20° of axis are classified
     slope_threshold = 0.36
 
+    top_margin, right_margin, bottom_margin, left_margin = edge_margins
+    y_top_thresh = int(img_h * top_margin)
+    y_bottom_thresh = int(img_h * (1 - bottom_margin))
+    x_left_thresh = int(img_w * left_margin)
+    x_right_thresh = int(img_w * (1 - right_margin))
+
     for x1, y1, x2, y2 in lines[:, 0, :]:
         dx = abs(x2 - x1)
         dy = abs(y2 - y1)
+        avg_y = (y1 + y2) // 2
+        avg_x = (x1 + x2) // 2
+
         if dy <= dx * slope_threshold:  # near horizontal
-            horiz_positions.extend([y1, y2])
+            # Only include if near top or bottom edge
+            if avg_y < y_top_thresh or avg_y > y_bottom_thresh:
+                horiz_positions.extend([y1, y2])
         elif dx <= dy * slope_threshold:  # near vertical
-            vert_positions.extend([x1, x2])
+            # Only include if near left or right edge
+            if avg_x < x_left_thresh or avg_x > x_right_thresh:
+                vert_positions.extend([x1, x2])
 
     return horiz_positions, vert_positions
 
@@ -399,6 +458,8 @@ def detect_frame_bounds(
     aspect_ratio: float,
     visualizer: DebugVisualizer | None = None,
     crop_in_percent: float = 0.0,
+    edge_margins: tuple[float, float, float, float] = (0.3, 0.3, 0.3, 0.3),
+    ignore_margins: tuple[float, float, float, float] = (0.0, 0.05, 0.0, 0.05),
 ) -> list[int]:
     """Detect frame boundaries in an image.
 
@@ -407,6 +468,8 @@ def detect_frame_bounds(
         aspect_ratio: Expected aspect ratio of the frame (width/height)
         visualizer: Optional debug visualizer to save intermediate images
         crop_in_percent: Percentage to crop inward from edges (0-100)
+        edge_margins: (top, right, bottom, left) fractions for edge detection regions
+        ignore_margins: (top, right, bottom, left) fractions to crop before analysis
 
     Returns:
         Array of [left, right, top, bottom] positions
@@ -414,6 +477,25 @@ def detect_frame_bounds(
     Raises:
         ValueError: If no lines or frame edges are detected, or invalid bounds
     """
+    orig_img = img
+    orig_h, orig_w = img.shape[:2]
+
+    # Crop out ignored margins before analysis
+    top_margin, right_margin, bottom_margin, left_margin = ignore_margins
+    ignore_top = int(orig_h * top_margin)
+    ignore_bottom = int(orig_h * bottom_margin)
+    ignore_left = int(orig_w * left_margin)
+    ignore_right = int(orig_w * right_margin)
+
+    if visualizer:
+        visualizer.save_ignore_margin(img, ignore_margins)
+
+    if ignore_top > 0 or ignore_bottom > 0 or ignore_left > 0 or ignore_right > 0:
+        img = img[
+            ignore_top : orig_h - ignore_bottom,
+            ignore_left : orig_w - ignore_right,
+        ]
+
     # Normalize levels to utilize full exposure range
     img = normalize_levels(img, visualizer)
 
@@ -421,15 +503,18 @@ def detect_frame_bounds(
     if lines is None:
         raise ValueError("No lines detected")
 
-    horiz_positions, vert_positions = classify_lines(lines)
+    img_h, img_w = img.shape[:2]
+
+    if visualizer:
+        visualizer.save_edge_margins(img, edge_margins)
+
+    horiz_positions, vert_positions = classify_lines(lines, img_h, img_w, edge_margins)
 
     if visualizer:
         visualizer.save_classified_lines(img, lines, horiz_positions, vert_positions)
 
     if not horiz_positions and not vert_positions:
         raise ValueError("No frame edges detected")
-
-    img_h, img_w = img.shape[:2]
 
     # Get raw sizes to help estimate missing axis
     vert_span = (
@@ -471,6 +556,13 @@ def detect_frame_bounds(
 
     if visualizer:
         visualizer.save_bounds(img, bounds)
+
+    # Adjust bounds back to original image coordinates
+    if ignore_left > 0 or ignore_top > 0:
+        bounds[LEFT] += ignore_left
+        bounds[RIGHT] += ignore_left
+        bounds[TOP] += ignore_top
+        bounds[BOTTOM] += ignore_top
 
     return bounds
 

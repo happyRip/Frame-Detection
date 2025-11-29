@@ -6,7 +6,7 @@ from pathlib import Path
 
 import cv2
 
-from frame_detection import crop_frame, detect_frame_bounds
+from frame_detection import crop_frame, detect_frame_bounds, parse_edge_margins
 
 DEFAULT_DELIM = "_"
 
@@ -80,6 +80,18 @@ def parse_args():
         default=0.85,
         help="Percentage to crop inward from detected edges (0-100)",
     )
+    parser.add_argument(
+        "--edge-margin",
+        default="30",
+        help="Edge margin for line detection (%%): single value (30), "
+        "vertical,horizontal (30,40), or top,right,bottom,left (30,40,50,10)",
+    )
+    parser.add_argument(
+        "--ignore-margin",
+        default="0,5",
+        help="Image margin to ignore during analysis (%%): single value (5), "
+        "vertical,horizontal (0,5), or top,right,bottom,left (0,5,0,5)",
+    )
     return parser.parse_args()
 
 
@@ -99,8 +111,13 @@ def main():
 
         visualizer = DebugVisualizer(args.debug_dir)
 
+    edge_margins = parse_edge_margins(args.edge_margin)
+    ignore_margins = parse_edge_margins(args.ignore_margin)
+
     try:
-        bounds = detect_frame_bounds(img, aspect_ratio, visualizer, args.crop_in)
+        bounds = detect_frame_bounds(
+            img, aspect_ratio, visualizer, args.crop_in, edge_margins, ignore_margins
+        )
     except ValueError as e:
         sys.exit(str(e))
 

@@ -154,12 +154,134 @@ class DebugVisualizer:
         """Save Canny edge detection result."""
         self._save("edges_canny", edges)
 
+    def save_edges_variations(self, blurred: np.ndarray, median: float, current_low_factor: float, current_high_factor: float):
+        """Save multiple Canny edge detection results with varying parameters.
+
+        Args:
+            blurred: Blurred grayscale image for edge detection
+            median: Median value of the blurred image
+            current_low_factor: Currently used low threshold factor
+            current_high_factor: Currently used high threshold factor
+        """
+        import matplotlib.pyplot as plt
+
+        # Factor variations to try (low_factor, high_factor, label)
+        variations = [
+            (0.33, 0.66, "0.33/0.66"),
+            (0.5, 1.0, "0.5/1.0"),
+            (current_low_factor, current_high_factor, f"current ({current_low_factor}/{current_high_factor})"),
+            (0.8, 1.5, "0.8/1.5"),
+            (1.0, 2.0, "1.0/2.0"),
+            (1.33, 2.66, "1.33/2.66"),
+        ]
+
+        # Create a grid of edge images
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        axes = axes.flatten()
+
+        for idx, (low_f, high_f, label) in enumerate(variations):
+            low = int(max(0, low_f * median))
+            high = int(min(255, high_f * median))
+            edges = cv2.Canny(blurred, low, high)
+            axes[idx].imshow(edges, cmap="gray")
+            axes[idx].set_title(f"{label}\nlow={low}, high={high}")
+            axes[idx].axis("off")
+
+        fig.suptitle(f"Canny Edge Detection (median={median:.0f})", fontsize=14)
+        fig.tight_layout()
+        self.step += 1
+        fig.savefig(self.output_dir / f"{self.step:02d}_edges_variations.png", dpi=150)
+        plt.close(fig)
+
     def save_lines(self, img: np.ndarray, lines: np.ndarray):
         """Save image with all detected lines drawn."""
         vis = img.copy()
         for x1, y1, x2, y2 in lines[:, 0, :]:
             cv2.line(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
         self._save("lines_all", vis)
+
+    def save_ignore_margin(
+        self,
+        img: np.ndarray,
+        ignore_margins: tuple[float, float, float, float],
+    ):
+        """Save visualization of ignored margins.
+
+        Args:
+            img: Original image before cropping
+            ignore_margins: (top, right, bottom, left) fractions
+        """
+        vis = img.copy()
+        img_h, img_w = img.shape[:2]
+        top_m, right_m, bottom_m, left_m = ignore_margins
+
+        ignore_top = int(img_h * top_m)
+        ignore_bottom = int(img_h * bottom_m)
+        ignore_left = int(img_w * left_m)
+        ignore_right = int(img_w * right_m)
+
+        overlay = vis.copy()
+        # Shade ignored regions in red
+        if ignore_top > 0:
+            overlay[:ignore_top, :] = (0, 0, 128)
+        if ignore_bottom > 0:
+            overlay[img_h - ignore_bottom :, :] = (0, 0, 128)
+        if ignore_left > 0:
+            overlay[:, :ignore_left] = (0, 0, 128)
+        if ignore_right > 0:
+            overlay[:, img_w - ignore_right :] = (0, 0, 128)
+
+        cv2.addWeighted(overlay, 0.5, vis, 0.5, 0, vis)
+
+        # Draw analysis region rectangle in green
+        cv2.rectangle(
+            vis,
+            (ignore_left, ignore_top),
+            (img_w - ignore_right, img_h - ignore_bottom),
+            (0, 255, 0),
+            3,
+        )
+
+        cv2.putText(vis, "Ignore margins (red=ignored)", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+        self._save("ignore_margin", vis)
+
+    def save_edge_margins(
+        self,
+        img: np.ndarray,
+        edge_margins: tuple[float, float, float, float],
+    ):
+        """Save visualization of edge margin zones for line detection.
+
+        Args:
+            img: Image being analyzed
+            edge_margins: (top, right, bottom, left) fractions
+        """
+        vis = img.copy()
+        img_h, img_w = img.shape[:2]
+        top_m, right_m, bottom_m, left_m = edge_margins
+
+        y_top = int(img_h * top_m)
+        y_bottom = int(img_h * (1 - bottom_m))
+        x_left = int(img_w * left_m)
+        x_right = int(img_w * (1 - right_m))
+
+        overlay = vis.copy()
+        # Shade edge zones in green (where lines are considered)
+        overlay[:y_top, :] = (0, 128, 0)  # Top zone
+        overlay[y_bottom:, :] = (0, 128, 0)  # Bottom zone
+        overlay[:, :x_left] = (0, 128, 0)  # Left zone
+        overlay[:, x_right:] = (0, 128, 0)  # Right zone
+
+        cv2.addWeighted(overlay, 0.3, vis, 0.7, 0, vis)
+
+        # Draw zone boundaries
+        cv2.line(vis, (0, y_top), (img_w, y_top), (0, 255, 0), 2)
+        cv2.line(vis, (0, y_bottom), (img_w, y_bottom), (0, 255, 0), 2)
+        cv2.line(vis, (x_left, 0), (x_left, img_h), (0, 255, 0), 2)
+        cv2.line(vis, (x_right, 0), (x_right, img_h), (0, 255, 0), 2)
+
+        cv2.putText(vis, "Edge margins (green=detection zones)", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+        self._save("edge_margins", vis)
 
     def save_classified_lines(
         self,
