@@ -156,9 +156,186 @@ class DebugVisualizer:
 
         self._save("sprocket_crop", vis)
 
+    def save_film_base(
+        self,
+        img: np.ndarray,
+        sample_mask: np.ndarray,
+        film_base: np.ndarray,
+        from_sprocket_regions: bool,
+    ):
+        """Save visualization of film base color detection.
+
+        Args:
+            img: Original image
+            sample_mask: Mask showing sampled regions (255=sampled)
+            film_base: Detected film base color (BGR)
+            from_sprocket_regions: Whether samples came from sprocket regions
+        """
+        vis = img.copy()
+        img_h, img_w = img.shape[:2]
+
+        # Overlay sampled regions in cyan
+        overlay = vis.copy()
+        overlay[sample_mask > 0] = (255, 255, 0)  # Cyan overlay for sampled areas
+        cv2.addWeighted(overlay, 0.4, vis, 0.6, 0, vis)
+
+        # Draw a color swatch showing the detected film base color
+        swatch_size = max(80, min(img_h, img_w) // 8)
+        swatch_x = img_w - swatch_size - 20
+        swatch_y = 20
+        cv2.rectangle(
+            vis,
+            (swatch_x, swatch_y),
+            (swatch_x + swatch_size, swatch_y + swatch_size),
+            film_base.tolist(),
+            -1,
+        )
+        cv2.rectangle(
+            vis,
+            (swatch_x, swatch_y),
+            (swatch_x + swatch_size, swatch_y + swatch_size),
+            (255, 255, 255),
+            3,
+        )
+
+        # Add labels
+        source = "sprocket regions" if from_sprocket_regions else "image edges"
+        cv2.putText(
+            vis,
+            f"Film base (from {source})",
+            (10, 50),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.2,
+            (255, 255, 255),
+            3,
+        )
+
+        b, g, r = film_base
+        cv2.putText(
+            vis,
+            f"BGR: ({b}, {g}, {r})",
+            (swatch_x - 100, swatch_y + swatch_size + 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,
+            (255, 255, 255),
+            2,
+        )
+
+        self._save("film_base", vis)
+
+    def save_film_base_mask(
+        self,
+        img: np.ndarray,
+        film_base_mask: np.ndarray,
+        film_base_color: np.ndarray,
+        tolerance: int,
+    ):
+        """Save visualization of film base mask.
+
+        Args:
+            img: Original image
+            film_base_mask: Binary mask where film base regions are 255
+            film_base_color: The detected film base color (BGR)
+            tolerance: Color tolerance used for matching
+        """
+        vis = img.copy()
+        img_h, img_w = img.shape[:2]
+
+        # Overlay film base mask in magenta
+        overlay = vis.copy()
+        overlay[film_base_mask > 0] = (255, 0, 255)  # Magenta for film base regions
+        cv2.addWeighted(overlay, 0.4, vis, 0.6, 0, vis)
+
+        # Draw contours around film base regions
+        contours, _ = cv2.findContours(
+            film_base_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        cv2.drawContours(vis, contours, -1, (0, 255, 0), 2)
+
+        # Draw color swatch
+        swatch_size = max(80, min(img_h, img_w) // 8)
+        swatch_x = img_w - swatch_size - 20
+        swatch_y = 20
+        cv2.rectangle(
+            vis,
+            (swatch_x, swatch_y),
+            (swatch_x + swatch_size, swatch_y + swatch_size),
+            film_base_color.tolist(),
+            -1,
+        )
+        cv2.rectangle(
+            vis,
+            (swatch_x, swatch_y),
+            (swatch_x + swatch_size, swatch_y + swatch_size),
+            (255, 255, 255),
+            3,
+        )
+
+        # Add labels
+        cv2.putText(
+            vis,
+            f"Film base mask (tolerance={tolerance})",
+            (10, 50),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.2,
+            (255, 255, 255),
+            3,
+        )
+
+        self._save("film_base_mask", vis)
+
+    def save_film_base_mask_cropped(
+        self,
+        img: np.ndarray,
+        film_base_mask_cropped: np.ndarray,
+        y_min: int,
+        y_max: int,
+    ):
+        """Save visualization of film base mask with sprocket areas excluded.
+
+        Args:
+            img: Original full image
+            film_base_mask_cropped: Binary mask cropped to valid region only
+            y_min: Top boundary of valid frame region
+            y_max: Bottom boundary of valid frame region
+        """
+        vis = img.copy()
+        img_h, img_w = img.shape[:2]
+
+        # Shade excluded sprocket regions in dark red
+        if y_min > 0:
+            vis[:y_min, :] = (vis[:y_min, :] * 0.3 + np.array([0, 0, 100])).astype(
+                np.uint8
+            )
+        if y_max < img_h:
+            vis[y_max:, :] = (vis[y_max:, :] * 0.3 + np.array([0, 0, 100])).astype(
+                np.uint8
+            )
+
+        # Overlay film base mask in magenta (in valid region)
+        overlay = vis.copy()
+        overlay[y_min:y_max, :][film_base_mask_cropped > 0] = (255, 0, 255)
+        cv2.addWeighted(overlay, 0.4, vis, 0.6, 0, vis)
+
+        # Draw boundary lines for valid region
+        cv2.line(vis, (0, y_min), (img_w, y_min), (0, 255, 255), 2)
+        cv2.line(vis, (0, y_max), (img_w, y_max), (0, 255, 255), 2)
+
+        cv2.putText(
+            vis,
+            "Film base mask (sprocket areas excluded)",
+            (10, 50),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.2,
+            (255, 255, 255),
+            3,
+        )
+
+        self._save("film_base_mask_cropped", vis)
+
     def save_edges(self, edges: np.ndarray):
-        """Save Canny edge detection result."""
-        self._save("edges_canny", edges)
+        """Save edge detection result."""
+        self._save("edges", edges)
 
     def save_edges_variations(self, blurred: np.ndarray, median: float, current_low_factor: float, current_high_factor: float):
         """Save multiple Canny edge detection results with varying parameters.
@@ -254,18 +431,27 @@ class DebugVisualizer:
         self,
         img: np.ndarray,
         edge_margins: Margins,
+        y_min: int = 0,
+        y_max: int | None = None,
     ):
         """Save visualization of edge margin zones for line detection.
 
         Args:
             img: Image being analyzed
             edge_margins: Margins object with (top, right, bottom, left) fractions
+            y_min: Minimum valid y coordinate (after sprocket cropping)
+            y_max: Maximum valid y coordinate (after sprocket cropping)
         """
         vis = img.copy()
         img_h, img_w = img.shape[:2]
 
-        y_top = int(img_h * edge_margins.top)
-        y_bottom = int(img_h * (1 - edge_margins.bottom))
+        if y_max is None:
+            y_max = img_h
+
+        # Apply edge margins relative to the valid region (after sprocket cropping)
+        valid_height = y_max - y_min
+        y_top = y_min + int(valid_height * edge_margins.top)
+        y_bottom = y_min + int(valid_height * (1 - edge_margins.bottom))
         x_left = int(img_w * edge_margins.left)
         x_right = int(img_w * (1 - edge_margins.right))
 

@@ -83,9 +83,9 @@ def parse_args():
     )
     parser.add_argument(
         "--edge-margin",
-        default="30",
-        help="Percentage of edge margin for line detection: single value (30), "
-        "vertical,horizontal (30,40), or top,right,bottom,left (30,40,50,10)",
+        default="5",
+        help="Percentage of edge margin for line detection: single value (5), "
+        "vertical,horizontal (5,10), or top,right,bottom,left (5,10,7.5,13.33)",
     )
     parser.add_argument(
         "--ignore-margin",

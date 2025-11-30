@@ -151,71 +151,173 @@ def crop_sprocket_region(
     return img_cropped, crop_top, img_h - crop_bottom
 
 
-def detect_lines(
-    img: np.ndarray, visualizer: DebugVisualizer | None = None
-) -> tuple[list[Line], int, int]:
-    """Detect lines in an image using Canny edge detection and Hough transform.
+def detect_film_base_color(
+    img: np.ndarray,
+    sprocket_mask: np.ndarray,
+    y_min: int,
+    y_max: int,
+    visualizer: DebugVisualizer | None = None,
+) -> np.ndarray:
+    """Detect film base color from unexposed regions.
 
-    Internally crops sprocket hole regions before edge detection, then adjusts
-    line coordinates back to original image space.
+    Samples from sprocket regions (excluding holes) if detected,
+    otherwise falls back to image edges.
+
+    Args:
+        img: Input image (normalized)
+        sprocket_mask: Binary mask of sprocket holes (255=hole)
+        y_min: Top boundary of valid frame region (below top sprockets)
+        y_max: Bottom boundary of valid frame region (above bottom sprockets)
+        visualizer: Optional debug visualizer
 
     Returns:
-        Tuple of (lines, y_min, y_max) where y_min and y_max define the valid
-        vertical region excluding sprocket holes.
+        Film base color as BGR numpy array of shape (3,)
     """
-    # Detect sprocket holes and crop them out before edge detection
-    sprocket_mask = detect_sprocket_holes(img, visualizer)
-    img_cropped, y_offset_top, y_offset_bottom = crop_sprocket_region(
-        img, sprocket_mask, visualizer
-    )
+    img_h, img_w = img.shape[:2]
+    sample_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    has_sprocket_regions = y_min > 0 or y_max < img_h
 
-    img_h = img.shape[0]
-    y_min = y_offset_top
-    y_max = img_h - y_offset_bottom
+    if has_sprocket_regions:
+        # Sample from sprocket regions, excluding the holes
+        if y_min > 0:
+            sample_mask[:y_min, :] = 255
+        if y_max < img_h:
+            sample_mask[y_max:, :] = 255
+        # Exclude sprocket holes
+        sample_mask[sprocket_mask > 0] = 0
 
-    # Re-normalize after cropping out sprocket holes for better contrast
-    img_cropped = normalize_levels(img_cropped, visualizer)
+    # Fallback: if no sprocket regions or insufficient samples, use image edges
+    min_samples = 100
+    if np.sum(sample_mask > 0) < min_samples:
+        has_sprocket_regions = False
+        sample_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+        edge_size = max(10, int(min(img_h, img_w) * 0.05))
+        sample_mask[:edge_size, :] = 255  # Top
+        sample_mask[img_h - edge_size :, :] = 255  # Bottom
+        sample_mask[:, :edge_size] = 255  # Left
+        sample_mask[:, img_w - edge_size :] = 255  # Right
 
-    gray = cv2.cvtColor(img_cropped, cv2.COLOR_BGR2GRAY)
-    k = max(
-        3, int(min(gray.shape[:2]) / 200) | 1
-    )  # Scale kernel with resolution, ensure odd
-    blurred = cv2.GaussianBlur(gray, (k, k), 0)
-    median = np.median(blurred)
-    low_factor, high_factor = 0.66, 1.33
-    low = int(max(0, low_factor * median))
-    high = int(min(255, high_factor * median))
-    edges = cv2.Canny(blurred, low, high)
+    # Extract sampled pixels and compute median color
+    sampled_pixels = img[sample_mask > 0]
+    film_base = np.median(sampled_pixels, axis=0).astype(np.uint8)
+
+    if visualizer:
+        visualizer.save_film_base(img, sample_mask, film_base, has_sprocket_regions)
+
+    return film_base
+
+
+def create_film_base_mask(
+    img: np.ndarray,
+    film_base_color: np.ndarray,
+    tolerance: int = 30,
+    visualizer: DebugVisualizer | None = None,
+) -> np.ndarray:
+    """Create a mask of pixels that match the film base color.
+
+    Args:
+        img: Input image (normalized)
+        film_base_color: BGR color of the film base
+        tolerance: Color distance tolerance for matching
+        visualizer: Optional debug visualizer
+
+    Returns:
+        Binary mask where film base regions are 255
+    """
+    # Compute color distance from film base for each pixel
+    diff = img.astype(np.int16) - film_base_color.astype(np.int16)
+    distance = np.sqrt(np.sum(diff**2, axis=2))
+
+    # Create mask for pixels within tolerance
+    film_base_mask = (distance <= tolerance).astype(np.uint8) * 255
+
+    # Clean up with morphological operations
+    kernel_size = max(3, int(min(img.shape[:2]) / 100) | 1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    film_base_mask = cv2.morphologyEx(film_base_mask, cv2.MORPH_CLOSE, kernel)
+    film_base_mask = cv2.morphologyEx(film_base_mask, cv2.MORPH_OPEN, kernel)
+
+    if visualizer:
+        visualizer.save_film_base_mask(img, film_base_mask, film_base_color, tolerance)
+
+    return film_base_mask
+
+
+def detect_lines(
+    img: np.ndarray,
+    film_base_mask: np.ndarray,
+    edge_margins: Margins,
+    visualizer: DebugVisualizer | None = None,
+) -> list[Line]:
+    """Detect lines from film base mask boundaries using Hough transform.
+
+    Detects lines separately in each margin region (top, bottom, left, right)
+    to ensure all frame edges are found.
+
+    Args:
+        img: Input image (for visualization only)
+        film_base_mask: Binary mask where film base regions are 255
+        edge_margins: Margins defining the regions to search for each edge
+        visualizer: Optional debug visualizer
+
+    Returns:
+        List of detected Line objects
+    """
+    img_h, img_w = img.shape[:2]
+
+    # Find edges of the film base mask (boundaries between frame and base)
+    edges = cv2.Canny(film_base_mask, 50, 150)
 
     if visualizer:
         visualizer.save_edges(edges)
-        visualizer.save_edges_variations(blurred, median, low_factor, high_factor)
 
-    min_dim = min(img_cropped.shape[:2])
-    raw_lines = cv2.HoughLinesP(
-        edges,
-        1,
-        np.pi / 180,
-        threshold=50,
-        minLineLength=min_dim * 0.2,
-        maxLineGap=min_dim // 10,
-    )
+    # Define margin boundaries
+    left_margin = int(img_w * edge_margins.left)
+    right_margin = int(img_w * (1 - edge_margins.right))
+    top_margin = int(img_h * edge_margins.top)
+    bottom_margin = int(img_h * (1 - edge_margins.bottom))
 
-    if raw_lines is None:
-        return [], y_min, y_max
+    all_lines = []
 
-    # Convert to Line objects and adjust coordinates back to original image space
-    lines = []
-    for line_data in raw_lines[:, 0, :]:
-        line = Line.from_hough(line_data)
-        if y_offset_top > 0:
-            line = line.offset_y(y_offset_top)
-        lines.append(line)
+    # Detect lines in each margin region separately
+    regions = [
+        ("left", edges[:, :left_margin], 0, 0),
+        ("right", edges[:, right_margin:], 0, right_margin),
+        ("top", edges[:top_margin, :], 0, 0),
+        ("bottom", edges[bottom_margin:, :], bottom_margin, 0),
+    ]
 
-    if visualizer:
-        visualizer.save_lines(img, lines)
+    for name, region_edges, y_offset, x_offset in regions:
+        if region_edges.size == 0:
+            continue
 
-    return lines, y_min, y_max
+        # Calculate parameters based on region dimensions
+        region_h, region_w = region_edges.shape[:2]
+        min_dim = min(region_h, region_w)
+
+        raw_lines = cv2.HoughLinesP(
+            region_edges,
+            rho=1,
+            theta=np.pi / 180,
+            threshold=30,
+            minLineLength=int(min_dim * 0.3),
+            maxLineGap=min_dim // 5,
+        )
+
+        if raw_lines is not None:
+            for line_data in raw_lines[:, 0, :]:
+                # Offset coordinates back to full image space
+                x1, y1, x2, y2 = line_data
+                line_data_offset = [
+                    x1 + x_offset,
+                    y1 + y_offset,
+                    x2 + x_offset,
+                    y2 + y_offset,
+                ]
+                line = Line.from_hough(line_data_offset)
+                all_lines.append(line)
+
+    return all_lines
 
 
 def classify_lines(
@@ -223,6 +325,8 @@ def classify_lines(
     img_h: int,
     img_w: int,
     edge_margins: Margins,
+    y_min: int = 0,
+    y_max: int | None = None,
 ) -> FrameBounds:
     """Classify lines into edge groups based on position and orientation.
 
@@ -234,14 +338,21 @@ def classify_lines(
         img_h: Image height
         img_w: Image width
         edge_margins: Margins defining edge detection regions
+        y_min: Minimum valid y coordinate (after sprocket cropping)
+        y_max: Maximum valid y coordinate (after sprocket cropping)
 
     Returns:
         FrameBounds with lines grouped by edge
     """
+    if y_max is None:
+        y_max = img_h
+
     frame_bounds = FrameBounds()
 
-    y_top_thresh = int(img_h * edge_margins.top)
-    y_bottom_thresh = int(img_h * (1 - edge_margins.bottom))
+    # Apply edge margins relative to the valid region (after sprocket cropping)
+    valid_height = y_max - y_min
+    y_top_thresh = y_min + int(valid_height * edge_margins.top)
+    y_bottom_thresh = y_min + int(valid_height * (1 - edge_margins.bottom))
     x_left_thresh = int(img_w * edge_margins.left)
     x_right_thresh = int(img_w * (1 - edge_margins.right))
 
@@ -250,17 +361,19 @@ def classify_lines(
 
     for line in lines:
         if line.is_horizontal:
-            # Classify as top or bottom based on position
+            # Classify as top or bottom only if within the appropriate margin
             if line.avg_y < y_top_thresh:
                 frame_bounds.top.add(line)
             elif line.avg_y > y_bottom_thresh:
                 frame_bounds.bottom.add(line)
+            # Lines in the middle are ignored
         elif line.is_vertical:
-            # Classify as left or right based on position
+            # Classify as left or right only if within the appropriate margin
             if line.avg_x < x_left_thresh:
                 frame_bounds.left.add(line)
             elif line.avg_x > x_right_thresh:
                 frame_bounds.right.add(line)
+            # Lines in the middle are ignored
 
     return frame_bounds
 
@@ -304,43 +417,81 @@ def normalize_levels(
 
 def apply_crop_in(
     img: np.ndarray,
+    film_base_mask: np.ndarray,
     left: int,
     right: int,
     top: int,
     bottom: int,
-    crop_in_percent: float,
+    max_crop_in_percent: float,
     visualizer: DebugVisualizer | None = None,
 ) -> tuple[int, int, int, int]:
-    """Shrink bounds inward by a percentage to exclude unexposed borders.
+    """Shrink bounds inward to exclude film base, up to a maximum percentage.
+
+    Crops inward until no film base is visible, but won't exceed the maximum
+    crop percentage on any side.
 
     Args:
         img: Input image (used for visualization)
+        film_base_mask: Binary mask where film base regions are 255
         left, right, top, bottom: Current bounds
-        crop_in_percent: Percentage of each dimension to crop from edges (0-100)
+        max_crop_in_percent: Maximum percentage to crop from each edge (0-100)
         visualizer: Optional debug visualizer to save intermediate images
 
     Returns:
-        Adjusted bounds (left, right, top, bottom) with crop-in applied
+        Adjusted bounds (left, right, top, bottom) with film base excluded
     """
-    if crop_in_percent <= 0:
-        return left, right, top, bottom
-
     bounds_before = [left, right, top, bottom]
 
     width = right - left
     height = bottom - top
 
-    crop_x = int(width * crop_in_percent / 100)
-    crop_y = int(height * crop_in_percent / 100)
+    # Calculate maximum allowed crop in pixels
+    max_crop_x = int(width * max_crop_in_percent / 100)
+    max_crop_y = int(height * max_crop_in_percent / 100)
 
-    left += crop_x
-    right -= crop_x
-    top += crop_y
-    bottom -= crop_y
+    # Left: scan rightward until no film base, but don't exceed max
+    new_left = left
+    for x in range(left, min(left + max_crop_x, right)):
+        col = film_base_mask[top:bottom, x]
+        if not np.any(col > 0):
+            new_left = x
+            break
+        new_left = x + 1
+    left = min(new_left, left + max_crop_x)
+
+    # Right: scan leftward until no film base, but don't exceed max
+    new_right = right
+    for x in range(right - 1, max(right - max_crop_x - 1, left), -1):
+        col = film_base_mask[top:bottom, x]
+        if not np.any(col > 0):
+            new_right = x + 1
+            break
+        new_right = x
+    right = max(new_right, right - max_crop_x)
+
+    # Top: scan downward until no film base, but don't exceed max
+    new_top = top
+    for y in range(top, min(top + max_crop_y, bottom)):
+        row = film_base_mask[y, left:right]
+        if not np.any(row > 0):
+            new_top = y
+            break
+        new_top = y + 1
+    top = min(new_top, top + max_crop_y)
+
+    # Bottom: scan upward until no film base, but don't exceed max
+    new_bottom = bottom
+    for y in range(bottom - 1, max(bottom - max_crop_y - 1, top), -1):
+        row = film_base_mask[y, left:right]
+        if not np.any(row > 0):
+            new_bottom = y + 1
+            break
+        new_bottom = y
+    bottom = max(new_bottom, bottom - max_crop_y)
 
     if visualizer:
         bounds_after = [left, right, top, bottom]
-        visualizer.save_crop_in(img, bounds_before, bounds_after, crop_in_percent)
+        visualizer.save_crop_in(img, bounds_before, bounds_after, max_crop_in_percent)
 
     return left, right, top, bottom
 
@@ -443,19 +594,51 @@ def detect_frame_bounds(
             ignore_left : orig_w - ignore_right,
         ]
 
-    # Normalize levels to utilize full exposure range
+    img_h, img_w = img.shape[:2]
+
+    # Step 1: Detect sprocket holes to find valid frame region
+    sprocket_mask = detect_sprocket_holes(img, visualizer)
+    _, y_offset_top, y_offset_bottom = crop_sprocket_region(
+        img, sprocket_mask, visualizer
+    )
+    y_min = y_offset_top
+    y_max = img_h - y_offset_bottom
+
+    # Step 2: Normalize levels for better color detection
     img = normalize_levels(img, visualizer)
 
-    lines, y_min, y_max = detect_lines(img, visualizer)
+    # Step 3: Detect film base color from normalized image
+    film_base_color = detect_film_base_color(
+        img, sprocket_mask, y_min, y_max, visualizer
+    )
+
+    # Step 4: Create mask of film base regions
+    film_base_mask = create_film_base_mask(img, film_base_color, visualizer=visualizer)
+
+    # Crop mask to valid frame region to avoid detecting sprocket boundaries as edges
+    film_base_mask_cropped = film_base_mask[y_min:y_max, :]
+
+    if visualizer:
+        visualizer.save_film_base_mask_cropped(img, film_base_mask_cropped, y_min, y_max)
+
+    # Step 5: Detect lines from film base mask boundaries (in each margin region)
+    img_cropped = img[y_min:y_max, :]
+    lines = detect_lines(img_cropped, film_base_mask_cropped, edge_margins, visualizer)
+
+    # Offset line coordinates back to original image space
+    if y_min > 0:
+        lines = [line.offset_y(y_min) for line in lines]
+
+    if visualizer:
+        visualizer.save_lines(img, lines)
+
     if not lines:
         raise ValueError("No lines detected")
 
-    img_h, img_w = img.shape[:2]
-
     if visualizer:
-        visualizer.save_edge_margins(img, edge_margins)
+        visualizer.save_edge_margins(img, edge_margins, y_min, y_max)
 
-    frame_bounds = classify_lines(lines, img_h, img_w, edge_margins)
+    frame_bounds = classify_lines(lines, img_h, img_w, edge_margins, y_min, y_max)
 
     if visualizer:
         visualizer.save_classified_lines(img, frame_bounds)
@@ -470,38 +653,64 @@ def detect_frame_bounds(
     left_positions = [line.avg_x for line in frame_bounds.left.lines]
     right_positions = [line.avg_x for line in frame_bounds.right.lines]
 
-    # Get raw sizes to help estimate missing axis
-    vert_span = (
-        max(right_positions) - min(left_positions)
-        if left_positions and right_positions
-        else img_w * 0.8
-    )
-    horiz_span = (
-        max(bottom_positions) - min(top_positions)
-        if top_positions and bottom_positions
-        else img_h * 0.8
-    )
+    # Determine which edges are detected
+    has_left = len(left_positions) > 0
+    has_right = len(right_positions) > 0
+    has_top = len(top_positions) > 0
+    has_bottom = len(bottom_positions) > 0
 
-    # Resolve edge positions
-    def resolve_axis(positions, img_size, other_size, ar, is_width):
-        if len(positions) >= 2:
-            return int(min(positions)), int(max(positions))
-        if len(positions) == 1:
-            edge_pos = int(positions[0])
-            size = int(round(other_size * ar)) if is_width else int(round(other_size / ar))
-            if edge_pos < img_size // 2:
-                return edge_pos, edge_pos + size
-            else:
-                return edge_pos - size, edge_pos
-        size = int(round(other_size * ar)) if is_width else int(round(other_size / ar))
-        return (img_size - size) // 2, (img_size + size) // 2
+    # Get detected edge positions
+    left = int(min(left_positions)) if has_left else None
+    right = int(max(right_positions)) if has_right else None
+    top = int(min(top_positions)) if has_top else None
+    bottom = int(max(bottom_positions)) if has_bottom else None
 
-    left, right = resolve_axis(
-        left_positions + right_positions, img_w, horiz_span, aspect_ratio, is_width=True
-    )
-    top, bottom = resolve_axis(
-        top_positions + bottom_positions, img_h, vert_span, aspect_ratio, is_width=False
-    )
+    # Calculate missing edge using aspect ratio when we have 3 edges
+    if has_top and has_bottom:
+        height = bottom - top
+        expected_width = int(height * aspect_ratio)
+        if not has_left and has_right:
+            left = right - expected_width
+        elif not has_right and has_left:
+            right = left + expected_width
+
+    if has_left and has_right:
+        width = right - left
+        expected_height = int(width / aspect_ratio)
+        if not has_top and has_bottom:
+            top = bottom - expected_height
+        elif not has_bottom and has_top:
+            bottom = top + expected_height
+
+    # Fallback for cases with fewer than 3 edges
+    if left is None or right is None or top is None or bottom is None:
+        # Estimate frame size from what we have
+        if has_top and has_bottom:
+            height = bottom - top
+            expected_width = int(height * aspect_ratio)
+        elif has_left and has_right:
+            expected_width = right - left
+        else:
+            height = int((y_max - y_min) * 0.9)
+            expected_width = int(height * aspect_ratio)
+
+        if left is None and right is None:
+            left = (img_w - expected_width) // 2
+            right = (img_w + expected_width) // 2
+        elif left is None:
+            left = right - expected_width
+        elif right is None:
+            right = left + expected_width
+
+        expected_height = int((right - left) / aspect_ratio)
+        if top is None and bottom is None:
+            center_y = (y_min + y_max) // 2
+            top = center_y - expected_height // 2
+            bottom = center_y + expected_height // 2
+        elif top is None:
+            top = bottom - expected_height
+        elif bottom is None:
+            bottom = top + expected_height
 
     # Clamp coordinates to image bounds (excluding sprocket regions)
     left = max(0, left)
@@ -512,9 +721,9 @@ def detect_frame_bounds(
     if right <= left or bottom <= top:
         raise ValueError("Invalid frame coordinates detected")
 
-    # Apply crop-in to exclude unexposed borders
+    # Apply crop-in to exclude film base from final crop
     left, right, top, bottom = apply_crop_in(
-        img, left, right, top, bottom, crop_in_percent, visualizer
+        img, film_base_mask, left, right, top, bottom, crop_in_percent, visualizer
     )
 
     # Enforce correct aspect ratio
