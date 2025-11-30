@@ -225,7 +225,7 @@ def create_film_base_mask(
         Binary mask where film base regions are 255
     """
     # Compute color distance from film base for each pixel
-    diff = img.astype(np.int16) - film_base_color.astype(np.int16)
+    diff = img.astype(np.float32) - film_base_color.astype(np.float32)
     distance = np.sqrt(np.sum(diff**2, axis=2))
 
     # Create mask for pixels within tolerance
