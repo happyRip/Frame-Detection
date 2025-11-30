@@ -226,3 +226,8 @@ __marimo__/
 *.bmp
 *.tiff
 *.webp
+
+# Data files
+*.json
+*.yaml
+*.yml
