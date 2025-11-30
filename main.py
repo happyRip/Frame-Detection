@@ -93,6 +93,11 @@ def parse_args():
         help="Percentage of image margin to ignore during analysis: single value (5), "
         "vertical,horizontal (0,5), or top,right,bottom,left (0,5,0,5)",
     )
+    parser.add_argument(
+        "--coords",
+        action="store_true",
+        help="Output crop coordinates (0.0-1.0) and angle to text file instead of cropped image",
+    )
     return parser.parse_args()
 
 
@@ -122,15 +127,32 @@ def main():
     except ValueError as e:
         sys.exit(str(e))
 
-    crop = crop_frame(img, bounds)
+    left, right, top, bottom = bounds
 
-    if args.output:
-        output_path = args.output
+    if args.coords:
+        # Output coordinates as fractions (0.0-1.0) and angle
+        left_frac = left / img_w
+        right_frac = right / img_w
+        top_frac = top / img_h
+        bottom_frac = bottom / img_h
+        angle = 0.0  # TODO: calculate rotation angle
+
+        output = f"{left_frac}\n{right_frac}\n{top_frac}\n{bottom_frac}\n{angle}"
+        if args.output:
+            with open(args.output, "w") as f:
+                f.write(output + "\n")
+        else:
+            print(output)
     else:
-        delim = args.delim or detect_delim(args.input) or args.default_delim
-        output_path = build_output_filename(args.input, args.prefix, args.suffix, delim)
+        crop = crop_frame(img, bounds)
 
-    cv2.imwrite(output_path, crop)
+        if args.output:
+            output_path = args.output
+        else:
+            delim = args.delim or detect_delim(args.input) or args.default_delim
+            output_path = build_output_filename(args.input, args.prefix, args.suffix, delim)
+
+        cv2.imwrite(output_path, crop)
 
 
 if __name__ == "__main__":
