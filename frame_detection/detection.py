@@ -7,41 +7,29 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from .models import EdgeGroup, FilmCutEnd, FrameBounds, Line, Margins, Orientation
+from .models import EdgeGroup, FilmCutEnd, FilmType, FrameBounds, Line, Margins, Orientation
 
 if TYPE_CHECKING:
     from .visualizer import DebugVisualizer
 
 
-def detect_sprocket_holes(
-    img: np.ndarray, visualizer: DebugVisualizer | None = None
-) -> np.ndarray:
-    """Detect sprocket holes as the rightmost peak in the tone curve.
-
-    Sprocket holes appear as overexposed white regions. In the histogram,
-    they form a distinct peak at the far right (bright end).
+def _detect_bright_sprocket_holes(
+    gray: np.ndarray, hist_smooth: np.ndarray
+) -> tuple[np.ndarray, int | None]:
+    """Detect sprocket holes as bright regions (for negative film).
 
     Args:
-        img: Input image as numpy array
-        visualizer: Optional debug visualizer to save intermediate images
+        gray: Grayscale image
+        hist_smooth: Smoothed histogram
 
     Returns:
-        Binary mask where sprocket holes are marked as 255
+        Tuple of (sprocket_mask, threshold_idx)
     """
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    # Compute histogram
-    hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
-
-    # Smooth histogram to reduce noise
-    kernel_size = 5
-    hist_smooth = np.convolve(hist, np.ones(kernel_size) / kernel_size, mode="same")
+    sprocket_mask = np.zeros(gray.shape, dtype=np.uint8)
+    threshold_idx = None
 
     # Find peaks in the bright region (right side of histogram, 200-255)
     bright_region = hist_smooth[200:]
-    sprocket_mask = np.zeros(gray.shape, dtype=np.uint8)
-    valley_idx = None
-    threshold_idx = None
 
     if bright_region.max() >= hist_smooth.max() * 0.02:
         # Find the rightmost significant peak
@@ -77,10 +65,294 @@ def detect_sprocket_holes(
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_k, dilate_k))
             sprocket_mask = cv2.dilate(sprocket_mask, kernel, iterations=2)
 
-    if visualizer:
-        visualizer.save_sprocket_holes(img, sprocket_mask, hist_smooth, threshold_idx)
+    return sprocket_mask, threshold_idx
 
-    return sprocket_mask
+
+def _detect_dark_sprocket_holes(
+    gray: np.ndarray, hist_smooth: np.ndarray
+) -> tuple[np.ndarray, int | None]:
+    """Detect sprocket holes as dark regions (for inverted negative film).
+
+    For inverted negatives (negatives converted to positive), sprocket holes
+    appear dark because the original clear areas become black when inverted.
+    The film base appears medium-dark (inverted from orange/grey).
+
+    This function analyzes only the edge regions where sprocket holes would be,
+    and looks for pixels that are distinctly darker than the film base.
+
+    Args:
+        gray: Grayscale image
+        hist_smooth: Smoothed histogram (of full image, used for reference)
+
+    Returns:
+        Tuple of (sprocket_mask, threshold_idx)
+    """
+    sprocket_mask = np.zeros(gray.shape, dtype=np.uint8)
+    threshold_idx = None
+
+    # Create edge mask to analyze only where sprocket holes would be
+    edge_mask = _create_edge_mask(gray, edge_fraction=0.12)
+    edge_pixels = gray[edge_mask > 0]
+
+    if len(edge_pixels) == 0:
+        return sprocket_mask, threshold_idx
+
+    # Calculate histogram of edge pixels only
+    edge_hist = cv2.calcHist([edge_pixels], [0], None, [256], [0, 256]).flatten()
+    kernel_size = 5
+    edge_hist_smooth = np.convolve(
+        edge_hist, np.ones(kernel_size) / kernel_size, mode="same"
+    )
+
+    # Find the median brightness at edges (this is likely the film base)
+    edge_median = np.median(edge_pixels)
+
+    # For inverted negatives, sprocket holes should be significantly darker
+    # than the film base. Look for a dark peak that's distinct from the median.
+    # Only consider pixels below the median as potential sprocket holes.
+    search_limit = min(int(edge_median * 0.7), 100)  # 70% of median or max 100
+
+    if search_limit < 10:
+        # Film base is already very dark, no room for darker sprocket holes
+        return sprocket_mask, threshold_idx
+
+    dark_region = edge_hist_smooth[:search_limit]
+
+    # Find if there's a significant peak in the dark region
+    if dark_region.max() < edge_hist_smooth.max() * 0.01:
+        # No significant dark peak at edges
+        return sprocket_mask, threshold_idx
+
+    # Find the darkest significant peak
+    threshold = dark_region.max() * 0.3
+    peak_idx = None
+    for i in range(len(dark_region)):
+        if dark_region[i] > threshold:
+            peak_idx = i
+            break
+
+    if peak_idx is None:
+        return sprocket_mask, threshold_idx
+
+    # Find valley between dark peak and film base
+    # Search from peak to the median area
+    search_end = min(int(edge_median), 200)
+    if search_end <= peak_idx:
+        search_end = peak_idx + 30
+
+    region = edge_hist_smooth[peak_idx:search_end]
+    if len(region) > 1:
+        # Find the valley (minimum) after the peak
+        valley_offset = np.argmin(region)
+        valley_idx = peak_idx + valley_offset
+
+        # Threshold is at the valley (transition between sprocket holes and film base)
+        threshold_idx = valley_idx
+    else:
+        threshold_idx = peak_idx + 5
+
+    # Create mask - only consider edge pixels below threshold
+    candidate_mask = (gray <= threshold_idx).astype(np.uint8) * 255
+
+    # Only keep candidates that are at edges
+    sprocket_mask = cv2.bitwise_and(candidate_mask, edge_mask)
+
+    # Validate: sprocket holes should be concentrated at edges, not everywhere
+    edge_concentration = _check_edge_concentration(sprocket_mask, edge_fraction=0.15)
+    if edge_concentration < 0.5:
+        # Dark pixels not concentrated at edges - likely not sprocket holes
+        return np.zeros(gray.shape, dtype=np.uint8), None
+
+    # Dilate to ensure we cover the hole edges
+    dilate_k = max(3, int(min(gray.shape[:2]) / 150) | 1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_k, dilate_k))
+    sprocket_mask = cv2.dilate(sprocket_mask, kernel, iterations=2)
+
+    return sprocket_mask, threshold_idx
+
+
+def _check_edge_concentration(mask: np.ndarray, edge_fraction: float = 0.15) -> float:
+    """Check what fraction of mask pixels are concentrated at image edges.
+
+    Args:
+        mask: Binary mask to analyze
+        edge_fraction: Fraction of image dimension to consider as edge
+
+    Returns:
+        Ratio of edge pixels to total mask pixels (0-1)
+    """
+    if mask.max() == 0:
+        return 0.0
+
+    img_h, img_w = mask.shape[:2]
+    h_margin = int(img_h * edge_fraction)
+    w_margin = int(img_w * edge_fraction)
+
+    total_pixels = np.sum(mask > 0)
+    if total_pixels == 0:
+        return 0.0
+
+    # Count in edge regions
+    top_bright = np.sum(mask[:h_margin, :] > 0)
+    bottom_bright = np.sum(mask[img_h - h_margin:, :] > 0)
+    left_bright = np.sum(mask[:, :w_margin] > 0)
+    right_bright = np.sum(mask[:, img_w - w_margin:] > 0)
+
+    edge_bright = top_bright + bottom_bright + left_bright + right_bright
+    return min(1.0, edge_bright / total_pixels)
+
+
+def _create_edge_mask(gray: np.ndarray, edge_fraction: float = 0.08) -> np.ndarray:
+    """Create a mask for edge regions where sprocket holes would be located.
+
+    Args:
+        gray: Grayscale image
+        edge_fraction: Fraction of image dimension to consider as edge (default 8%)
+
+    Returns:
+        Binary mask where edge regions are 255
+    """
+    img_h, img_w = gray.shape[:2]
+    h_margin = int(img_h * edge_fraction)
+    w_margin = int(img_w * edge_fraction)
+
+    edge_mask = np.zeros(gray.shape, dtype=np.uint8)
+    edge_mask[:h_margin, :] = 255  # Top edge
+    edge_mask[img_h - h_margin:, :] = 255  # Bottom edge
+    edge_mask[:, :w_margin] = 255  # Left edge
+    edge_mask[:, img_w - w_margin:] = 255  # Right edge
+
+    return edge_mask
+
+
+def _analyze_edge_brightness(
+    gray: np.ndarray, edge_fraction: float = 0.08
+) -> tuple[float, float, np.ndarray]:
+    """Analyze edge region brightness to detect film type.
+
+    Samples the outer edges of the image where sprocket holes would be located,
+    and analyzes brightness distribution (color-independent).
+
+    Args:
+        gray: Grayscale image
+        edge_fraction: Fraction of image dimension to consider as edge (default 8%)
+
+    Returns:
+        Tuple of (bright_ratio, dark_ratio, edge_mask):
+            - bright_ratio: Fraction of edge pixels that are bright (>200)
+            - dark_ratio: Fraction of edge pixels that are dark (<50)
+            - edge_mask: Binary mask showing the analyzed edge regions
+    """
+    edge_mask = _create_edge_mask(gray, edge_fraction)
+
+    # Get pixels from edge regions
+    edge_gray = gray[edge_mask > 0]
+    total_edge_pixels = len(edge_gray)
+
+    if total_edge_pixels == 0:
+        return 0.0, 0.0, edge_mask
+
+    # Count bright and dark pixels at edges
+    bright_pixels = edge_gray[edge_gray >= 200]
+    dark_pixels = edge_gray[edge_gray <= 50]
+
+    bright_ratio = len(bright_pixels) / total_edge_pixels
+    dark_ratio = len(dark_pixels) / total_edge_pixels
+
+    return bright_ratio, dark_ratio, edge_mask
+
+
+def _auto_detect_film_type(
+    gray: np.ndarray, hist_smooth: np.ndarray, img: np.ndarray | None = None
+) -> tuple[FilmType, np.ndarray, int | None, np.ndarray]:
+    """Auto-detect film type based on edge region brightness analysis.
+
+    Detects film type by analyzing brightness at edges (color-independent):
+
+    For negative film (color or B&W):
+        - Sprocket holes appear BRIGHT (light passes through clear holes)
+
+    For positive/slide film:
+        - Sprocket holes appear DARK
+
+    Args:
+        gray: Grayscale image
+        hist_smooth: Smoothed histogram
+        img: Color image (unused, kept for API compatibility)
+
+    Returns:
+        Tuple of (detected_film_type, sprocket_mask, threshold_idx, edge_analysis_mask)
+    """
+    # Try both detection methods
+    bright_mask, bright_threshold = _detect_bright_sprocket_holes(gray, hist_smooth)
+    dark_mask, dark_threshold = _detect_dark_sprocket_holes(gray, hist_smooth)
+
+    # Analyze edge brightness distribution
+    bright_ratio, dark_ratio, edge_mask = _analyze_edge_brightness(gray)
+
+    # Decision logic based purely on edge brightness:
+    # Compare dark vs bright ratio - whichever is higher indicates the film type
+    #
+    # Negative film: edges are predominantly bright (sprocket holes let light through)
+    # Positive film: edges are predominantly dark (sprocket holes block light)
+
+    if dark_ratio > bright_ratio:
+        return FilmType.POSITIVE, dark_mask, dark_threshold, edge_mask
+    else:
+        return FilmType.NEGATIVE, bright_mask, bright_threshold, edge_mask
+
+
+def detect_sprocket_holes(
+    img: np.ndarray,
+    film_type: FilmType = FilmType.AUTO,
+    visualizer: DebugVisualizer | None = None,
+) -> tuple[np.ndarray, FilmType]:
+    """Detect sprocket holes based on film type.
+
+    For negative film, sprocket holes appear as bright/white regions.
+    For positive film, sprocket holes appear as dark/black regions.
+    Auto mode detects based on histogram analysis and edge concentration.
+
+    Args:
+        img: Input image as numpy array
+        film_type: Type of film (NEGATIVE, POSITIVE, or AUTO)
+        visualizer: Optional debug visualizer to save intermediate images
+
+    Returns:
+        Tuple of (binary mask where sprocket holes are marked as 255,
+                  detected or specified film type)
+    """
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Compute histogram
+    hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+
+    # Smooth histogram to reduce noise
+    kernel_size = 5
+    hist_smooth = np.convolve(hist, np.ones(kernel_size) / kernel_size, mode="same")
+
+    # Compute edge brightness metrics and mask for visualization
+    bright_ratio, dark_ratio, edge_mask = _analyze_edge_brightness(gray)
+    edge_metrics = (bright_ratio, dark_ratio)
+
+    if film_type == FilmType.AUTO:
+        detected_type, sprocket_mask, threshold_idx, _ = _auto_detect_film_type(
+            gray, hist_smooth, img
+        )
+    elif film_type == FilmType.NEGATIVE:
+        detected_type = FilmType.NEGATIVE
+        sprocket_mask, threshold_idx = _detect_bright_sprocket_holes(gray, hist_smooth)
+    else:  # FilmType.POSITIVE
+        detected_type = FilmType.POSITIVE
+        sprocket_mask, threshold_idx = _detect_dark_sprocket_holes(gray, hist_smooth)
+
+    if visualizer:
+        visualizer.save_sprocket_holes(
+            img, sprocket_mask, hist_smooth, threshold_idx, detected_type,
+            edge_metrics, edge_mask
+        )
+
+    return sprocket_mask, detected_type
 
 
 def detect_sprocket_presence(
@@ -1140,6 +1412,7 @@ def detect_frame_bounds(
     edge_margins: Margins | None = None,
     ignore_margins: Margins | None = None,
     film_base_inset_percent: float = 1.0,
+    film_type: FilmType = FilmType.AUTO,
 ) -> tuple[FrameBounds, list[int]]:
     """Detect frame boundaries in an image.
 
@@ -1152,6 +1425,7 @@ def detect_frame_bounds(
         edge_margins: Margins defining edge detection regions
         ignore_margins: Margins to crop before analysis
         film_base_inset_percent: Diagonal inset percentage for film base sampling (no sprockets)
+        film_type: Type of film (NEGATIVE, POSITIVE, or AUTO for auto-detection)
 
     Returns:
         Tuple of (FrameBounds object, [left, right, top, bottom] positions)
@@ -1168,7 +1442,7 @@ def detect_frame_bounds(
     img_h, img_w = orig_h, orig_w
 
     # Step 1: Detect sprocket holes on full image first
-    sprocket_mask = detect_sprocket_holes(img, visualizer)
+    sprocket_mask, detected_film_type = detect_sprocket_holes(img, film_type, visualizer)
     has_sprockets = detect_sprocket_presence(sprocket_mask, visualizer)
 
     if has_sprockets:

@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 
 from .detection import crop_frame, detect_frame_bounds
-from .models import Margins
+from .models import FilmType, Margins
 
 DEFAULT_DELIM = "_"
 
@@ -110,6 +110,13 @@ def parse_args():
         action="store_true",
         help="Output crop coordinates (0.0-1.0) and angle to text file instead of cropped image",
     )
+    parser.add_argument(
+        "--film-type",
+        choices=["auto", "negative", "positive"],
+        default="auto",
+        help="Film type: 'negative' (bright sprocket holes), 'positive' (dark sprocket holes), "
+        "or 'auto' to detect automatically (default: auto)",
+    )
     return parser.parse_args()
 
 
@@ -132,6 +139,14 @@ def main():
     edge_margins = Margins.parse(args.edge_margin)
     ignore_margins = Margins.parse(args.ignore_margin)
 
+    # Parse film type
+    film_type_map = {
+        "auto": FilmType.AUTO,
+        "negative": FilmType.NEGATIVE,
+        "positive": FilmType.POSITIVE,
+    }
+    film_type = film_type_map[args.film_type]
+
     # Keep a copy of original image for debug visualization
     img_original = img.copy() if visualizer else None
 
@@ -145,6 +160,7 @@ def main():
             edge_margins=edge_margins,
             ignore_margins=ignore_margins,
             film_base_inset_percent=args.film_base_inset,
+            film_type=film_type,
         )
     except ValueError as e:
         sys.exit(str(e))

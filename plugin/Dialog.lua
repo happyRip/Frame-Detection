@@ -27,6 +27,12 @@ local ASPECT_RATIOS = {
 	{ title = "Custom", value = "custom" },
 }
 
+local FILM_TYPES = {
+	{ title = "Auto-detect", value = "auto" },
+	{ title = "Negative", value = "negative" },
+	{ title = "Positive", value = "positive" },
+}
+
 --------------------------------------------------------------------------------
 -- UI Tabs
 --------------------------------------------------------------------------------
@@ -57,6 +63,16 @@ local function buildCropSettingsTab(f, props, restoreDefaults)
 						end,
 					}),
 					tooltip = "Enter a custom aspect ratio (e.g., 16:9).",
+				}),
+			}),
+
+			f:row({
+				f:static_text({ title = "Film Type:", width = 100 }),
+				f:popup_menu({
+					items = FILM_TYPES,
+					value = LrView.bind("filmType"),
+					width = 220,
+					tooltip = "Select the film type. Negative film has bright sprocket holes, positive (slide) film has dark sprocket holes. Auto-detect will try to determine the type automatically.",
 				}),
 			}),
 

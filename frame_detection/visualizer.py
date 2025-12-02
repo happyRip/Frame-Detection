@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from .models import Orientation
+from .models import FilmType, Orientation
 
 if TYPE_CHECKING:
     from .models import FilmCutEnd, FrameBounds, Line, Margins
@@ -91,9 +91,30 @@ class DebugVisualizer:
         mask: np.ndarray,
         histogram: np.ndarray | None = None,
         threshold: int | None = None,
+        film_type: FilmType | None = None,
+        edge_metrics: tuple[float, float] | None = None,
+        edge_mask: np.ndarray | None = None,
     ):
-        """Save image with detected sprocket holes and histogram visualization."""
+        """Save image with detected sprocket holes and histogram visualization.
+
+        Args:
+            img: Original image
+            mask: Sprocket hole mask
+            histogram: Smoothed histogram
+            threshold: Detection threshold
+            film_type: Detected film type
+            edge_metrics: Optional tuple of (bright_ratio, dark_ratio)
+                from edge brightness analysis
+            edge_mask: Optional mask showing the edge regions used for analysis
+        """
         vis = img.copy()
+
+        # Overlay edge analysis region in green (show where we analyze for film type)
+        if edge_mask is not None:
+            edge_overlay = vis.copy()
+            edge_overlay[edge_mask > 0] = (0, 255, 0)  # Green for analysis region
+            cv2.addWeighted(edge_overlay, 0.3, vis, 0.7, 0, vis)
+
         # Overlay sprocket hole mask in red
         overlay = vis.copy()
         overlay[mask > 0] = (0, 0, 255)
@@ -101,6 +122,26 @@ class DebugVisualizer:
         # Draw contours around detected holes
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(vis, contours, -1, (0, 255, 255), 2)
+
+        # Add film type label
+        y_pos = 50
+        if film_type is not None:
+            type_label = f"Film type: {film_type.value.upper()}"
+            detection_mode = "bright regions" if film_type == FilmType.NEGATIVE else "dark regions"
+            cv2.putText(vis, type_label, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+            y_pos += 40
+            cv2.putText(vis, f"(detecting {detection_mode})", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2)
+            y_pos += 40
+
+        # Add edge brightness metrics if provided
+        if edge_metrics is not None:
+            bright_ratio, dark_ratio = edge_metrics
+            cv2.putText(vis, f"Edge bright: {bright_ratio:.1%}", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+            y_pos += 30
+            cv2.putText(vis, f"Edge dark: {dark_ratio:.1%}", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+            y_pos += 30
+            cv2.putText(vis, "Green = analysis region", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
         self._save("sprocket_holes", vis)
 
         # Save histogram visualization if provided
@@ -114,9 +155,21 @@ class DebugVisualizer:
             ax.set_xlabel("Brightness")
             ax.set_ylabel("Count")
             ax.set_xlim(0, 255)
+
+            # Highlight the detection region based on film type
+            if film_type == FilmType.NEGATIVE:
+                ax.axvspan(200, 255, alpha=0.2, color="yellow", label="Bright detection region")
+            elif film_type == FilmType.POSITIVE:
+                ax.axvspan(0, 55, alpha=0.2, color="blue", label="Dark detection region")
+
             if threshold is not None:
                 ax.axvline(x=threshold, color="red", linestyle="--", label=f"threshold={threshold}")
-                ax.legend()
+
+            ax.legend()
+            title = "Sprocket Histogram"
+            if film_type is not None:
+                title += f" ({film_type.value})"
+            ax.set_title(title)
             fig.tight_layout()
             fig.savefig(self.output_dir / f"{self.step + 1:02d}_sprocket_histogram.png", dpi=100)
             plt.close(fig)

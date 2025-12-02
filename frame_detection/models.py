@@ -17,6 +17,19 @@ class Orientation(Enum):
     VERTICAL = "vertical"  # Sprockets on left/right edges
 
 
+class FilmType(Enum):
+    """Type of film stock affecting detection strategy.
+
+    NEGATIVE: Sprocket holes appear bright (light passes through during scan)
+    POSITIVE: Sprocket holes appear dark (slide film or dark background scan)
+    AUTO: Automatically detect based on histogram analysis
+    """
+
+    NEGATIVE = "negative"
+    POSITIVE = "positive"
+    AUTO = "auto"
+
+
 @dataclass
 class Margins:
     """Represents margins for edges (top, right, bottom, left)."""

@@ -165,11 +165,11 @@ end
 
 function processPhotos(photos, settings)
 	settings = settings or {}
-	local aspectRatio = settings.aspectRatio or "3:2"
+	local aspectRatio = settings.aspectRatio or "2:3"
 	local filmType = settings.filmType or "auto"
 	local cropIn = settings.cropIn or 1.5
 	local sprocketMargin = settings.sprocketMargin or 0.1
-	local filmBaseInset = settings.filmBaseInset or 1.5
+	local filmBaseInset = settings.filmBaseInset or 1.0
 	local edgeMargin = settings.edgeMargin or "5"
 	local ignoreMargin = settings.ignoreMargin or "0,1"
 	local resetCrop = settings.resetCrop or false
