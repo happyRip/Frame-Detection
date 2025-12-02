@@ -419,6 +419,7 @@ def crop_sprocket_region(
     img: np.ndarray,
     sprocket_mask: np.ndarray,
     orientation: Orientation = Orientation.HORIZONTAL,
+    margin_percent: float = 0.0,
     visualizer: DebugVisualizer | None = None,
 ) -> tuple[np.ndarray, int, int, int, int]:
     """Crop out the region containing sprocket holes.
@@ -430,6 +431,8 @@ def crop_sprocket_region(
         img: Input image as numpy array
         sprocket_mask: Binary mask where sprocket holes are marked as 255
         orientation: "horizontal" for top/bottom sprockets, "vertical" for left/right
+        margin_percent: Additional percentage of image dimension to crop beyond
+            detected sprocket boundary (default 0.0, e.g., 0.5 for 0.5%)
         visualizer: Optional debug visualizer to save intermediate images
 
     Returns:
@@ -454,21 +457,21 @@ def crop_sprocket_region(
             return img, 0, 0, 0, 0
 
         sprocket_rows = np.where(rows_with_sprockets)[0]
-        margin = max(1, img_h // 500)
+        margin = int(img_h * margin_percent / 100)
 
         # Top crop: find lowest sprocket row in top half
         top_sprockets = sprocket_rows[sprocket_rows < mid_y]
         if len(top_sprockets) > 0:
-            crop_top = np.max(top_sprockets) + 1
-            crop_top = min(crop_top + margin, mid_y)
+            crop_top = np.max(top_sprockets) + 1 + margin
+            crop_top = min(crop_top, mid_y)
         else:
             crop_top = 0
 
         # Bottom crop: find highest sprocket row in bottom half
         bottom_sprockets = sprocket_rows[sprocket_rows >= mid_y]
         if len(bottom_sprockets) > 0:
-            crop_bottom = np.min(bottom_sprockets)
-            crop_bottom = max(crop_bottom - margin, mid_y)
+            crop_bottom = np.min(bottom_sprockets) - margin
+            crop_bottom = max(crop_bottom, mid_y)
         else:
             crop_bottom = img_h
 
@@ -492,21 +495,21 @@ def crop_sprocket_region(
             return img, 0, 0, 0, 0
 
         sprocket_cols = np.where(cols_with_sprockets)[0]
-        margin = max(1, img_w // 500)
+        margin = int(img_w * margin_percent / 100)
 
         # Left crop: find rightmost sprocket column in left half
         left_sprockets = sprocket_cols[sprocket_cols < mid_x]
         if len(left_sprockets) > 0:
-            crop_left = np.max(left_sprockets) + 1
-            crop_left = min(crop_left + margin, mid_x)
+            crop_left = np.max(left_sprockets) + 1 + margin
+            crop_left = min(crop_left, mid_x)
         else:
             crop_left = 0
 
         # Right crop: find leftmost sprocket column in right half
         right_sprockets = sprocket_cols[sprocket_cols >= mid_x]
         if len(right_sprockets) > 0:
-            crop_right = np.min(right_sprockets)
-            crop_right = max(crop_right - margin, mid_x)
+            crop_right = np.min(right_sprockets) - margin
+            crop_right = max(crop_right, mid_x)
         else:
             crop_right = img_w
 
@@ -955,6 +958,7 @@ def detect_frame_bounds(
     aspect_ratio: float,
     visualizer: DebugVisualizer | None = None,
     crop_in_percent: float = 0.0,
+    sprocket_margin_percent: float = 0.0,
     edge_margins: Margins | None = None,
     ignore_margins: Margins | None = None,
 ) -> tuple[FrameBounds, list[int]]:
@@ -965,6 +969,7 @@ def detect_frame_bounds(
         aspect_ratio: Expected aspect ratio of the frame (width/height)
         visualizer: Optional debug visualizer to save intermediate images
         crop_in_percent: Percentage to crop inward from edges (0-100)
+        sprocket_margin_percent: Additional percentage to crop beyond sprocket holes (0-100)
         edge_margins: Margins defining edge detection regions
         ignore_margins: Margins to crop before analysis
 
@@ -977,28 +982,12 @@ def detect_frame_bounds(
     if edge_margins is None:
         edge_margins = Margins(0.3, 0.3, 0.3, 0.3)
     if ignore_margins is None:
-        ignore_margins = Margins(0.0, 0.05, 0.0, 0.05)
+        ignore_margins = Margins(0.0, 0.0, 0.0, 0.0)
 
     orig_h, orig_w = img.shape[:2]
+    img_h, img_w = orig_h, orig_w
 
-    # Crop out ignored margins before analysis
-    ignore_top = int(orig_h * ignore_margins.top)
-    ignore_bottom = int(orig_h * ignore_margins.bottom)
-    ignore_left = int(orig_w * ignore_margins.left)
-    ignore_right = int(orig_w * ignore_margins.right)
-
-    if visualizer:
-        visualizer.save_ignore_margin(img, ignore_margins)
-
-    if ignore_top > 0 or ignore_bottom > 0 or ignore_left > 0 or ignore_right > 0:
-        img = img[
-            ignore_top : orig_h - ignore_bottom,
-            ignore_left : orig_w - ignore_right,
-        ]
-
-    img_h, img_w = img.shape[:2]
-
-    # Step 1: Detect sprocket holes to find valid frame region
+    # Step 1: Detect sprocket holes on full image first
     sprocket_mask = detect_sprocket_holes(img, visualizer)
     has_sprockets = detect_sprocket_presence(sprocket_mask, visualizer)
 
@@ -1012,7 +1001,9 @@ def detect_frame_bounds(
         )
 
         _, y_offset_top, y_offset_bottom, x_offset_left, x_offset_right = (
-            crop_sprocket_region(img, sprocket_mask_filtered, orientation, visualizer)
+            crop_sprocket_region(
+                img, sprocket_mask_filtered, orientation, sprocket_margin_percent, visualizer
+            )
         )
 
         # Define valid frame region based on orientation
@@ -1041,6 +1032,34 @@ def detect_frame_bounds(
         y_max = img_h
         x_min = 0
         x_max = img_w
+
+    # Apply ignore margins after sprocket detection
+    ignore_top = int(orig_h * ignore_margins.top)
+    ignore_bottom = int(orig_h * ignore_margins.bottom)
+    ignore_left = int(orig_w * ignore_margins.left)
+    ignore_right = int(orig_w * ignore_margins.right)
+
+    if visualizer:
+        visualizer.save_ignore_margin(img, ignore_margins)
+
+    if ignore_top > 0 or ignore_bottom > 0 or ignore_left > 0 or ignore_right > 0:
+        img = img[
+            ignore_top : orig_h - ignore_bottom,
+            ignore_left : orig_w - ignore_right,
+        ]
+        img_h, img_w = img.shape[:2]
+
+        # Adjust sprocket boundaries to account for ignore margins
+        y_min = max(0, y_min - ignore_top)
+        y_max = min(img_h, y_max - ignore_top)
+        x_min = max(0, x_min - ignore_left)
+        x_max = min(img_w, x_max - ignore_left)
+
+        # Also crop the sprocket mask for film base detection
+        sprocket_mask = sprocket_mask[
+            ignore_top : orig_h - ignore_bottom,
+            ignore_left : orig_w - ignore_right,
+        ]
 
     # Step 2: Normalize levels for better color detection
     img = normalize_levels(img, visualizer)
@@ -1201,11 +1220,10 @@ def detect_frame_bounds(
         visualizer.save_bounds(img, [left, right, top, bottom])
 
     # Adjust bounds back to original image coordinates
-    if ignore_left > 0 or ignore_top > 0:
-        left += ignore_left
-        right += ignore_left
-        top += ignore_top
-        bottom += ignore_top
+    left += ignore_left
+    right += ignore_left
+    top += ignore_top
+    bottom += ignore_top
 
     return frame_bounds, [left, right, top, bottom]
 

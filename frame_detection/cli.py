@@ -125,7 +125,12 @@ def main():
 
     try:
         frame_bounds, bounds = detect_frame_bounds(
-            img, aspect_ratio, visualizer, args.crop_in, edge_margins, ignore_margins
+            img,
+            aspect_ratio,
+            visualizer=visualizer,
+            crop_in_percent=args.crop_in,
+            edge_margins=edge_margins,
+            ignore_margins=ignore_margins,
         )
     except ValueError as e:
         sys.exit(str(e))
