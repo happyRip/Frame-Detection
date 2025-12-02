@@ -1,4 +1,6 @@
 {
   "venvPath": ".",
-  "venv": "venv"
+  "venv": "venv",
+  "include": ["frame_detection"],
+  "extraPaths": ["."]
 }

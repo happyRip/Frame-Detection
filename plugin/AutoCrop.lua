@@ -33,16 +33,16 @@ end
 -- Enable logging by default
 configureLogging(true, _PLUGIN.path)
 
--- Global settings
-local scriptPath = LrPathUtils.child(_PLUGIN.path, "main.py")
+-- Python environment paths
+local venvPath = LrPathUtils.child(_PLUGIN.path, "venv")
+local pythonPath = LrPathUtils.child(LrPathUtils.child(venvPath, "bin"), "python")
 
 -- Template string to run Python scripts
--- (You may need to modify this to point to the right Python binary)
-local pythonPath = LrPathUtils.child(LrPathUtils.child(LrPathUtils.child(_PLUGIN.path, "venv"), "bin"), "python")
-local pythonCommand = '"' .. pythonPath .. '" __ARGS__'
+-- Uses `python -m frame_detection` to run the package
+local pythonCommand = '"' .. pythonPath .. '" -m frame_detection __ARGS__'
 if WIN_ENV then
 	-- Run Python through the Linux sub-system on Windows
-	pythonCommand = "bash -c 'DISPLAY=:0 python __ARGS__'"
+	pythonCommand = "bash -c 'DISPLAY=:0 python -m frame_detection __ARGS__'"
 end
 
 -- Create directory to save temporary exports to
@@ -246,10 +246,8 @@ function processPhotos(photos, settings)
 			local photoPath = rendition.destinationPath
 			local dataPath = photoPath .. ".txt"
 
-			-- Build a command line to run a Python script on the exported image
+			-- Build command line arguments for the frame_detection module
 			local args = '"'
-				.. fixPath(scriptPath)
-				.. '" "'
 				.. fixPath(photoPath)
 				.. '"'
 				.. " --coords --output "

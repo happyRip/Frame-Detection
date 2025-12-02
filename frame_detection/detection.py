@@ -7,13 +7,10 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from models import EdgeGroup, FrameBounds, Line, Margins
+from .models import EdgeGroup, FrameBounds, Line, Margins
 
 if TYPE_CHECKING:
-    from debug_visualizer import DebugVisualizer
-
-# Re-export for backwards compatibility
-parse_edge_margins = Margins.parse
+    from .visualizer import DebugVisualizer
 
 
 def detect_sprocket_holes(

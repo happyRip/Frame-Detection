@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Command-line interface for frame detection."""
 
 import argparse
 import sys
@@ -6,8 +6,8 @@ from pathlib import Path
 
 import cv2
 
-from frame_detection import crop_frame, detect_frame_bounds
-from models import Margins
+from .detection import crop_frame, detect_frame_bounds
+from .models import Margins
 
 DEFAULT_DELIM = "_"
 
@@ -113,7 +113,7 @@ def main():
 
     visualizer = None
     if args.debug_dir:
-        from debug_visualizer import DebugVisualizer
+        from .visualizer import DebugVisualizer
 
         visualizer = DebugVisualizer(args.debug_dir)
 

@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 if TYPE_CHECKING:
-    from models import FrameBounds, Line, Margins
+    from .models import FrameBounds, Line, Margins
 
 
 class DebugVisualizer:
