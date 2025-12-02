@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from .models import EdgeGroup, FrameBounds, Line, Margins, Orientation
+from .models import EdgeGroup, FilmCutEnd, FrameBounds, Line, Margins, Orientation
 
 if TYPE_CHECKING:
     from .visualizer import DebugVisualizer
@@ -137,6 +137,200 @@ def detect_sprocket_orientation(
         )
 
     return orientation
+
+
+def detect_film_cut_end(
+    sprocket_mask: np.ndarray,
+    orientation: Orientation,
+    visualizer: DebugVisualizer | None = None,
+) -> FilmCutEnd:
+    """Detect if the film has been cut and the cut end is visible.
+
+    When a film strip is cut, the cut end may be visible in the viewport as a
+    large bright area at the edge (no film covering it). This can only happen
+    at the ends of the film strip - in landscape orientation, this is left/right.
+
+    The detection looks for bright areas at the edge that:
+    1. Touch the viewport edge
+    2. Span a significant portion of the frame height
+    3. Are contiguous (not isolated sprocket holes)
+
+    Args:
+        sprocket_mask: Binary mask where bright areas (sprocket holes) are 255
+        orientation: Film orientation
+        visualizer: Optional debug visualizer
+
+    Returns:
+        FilmCutEnd object indicating which edges have a visible cut end
+    """
+    if sprocket_mask.max() == 0:
+        return FilmCutEnd()
+
+    img_h, img_w = sprocket_mask.shape[:2]
+    cut_end = FilmCutEnd()
+
+    # Define edge region width and minimum coverage threshold
+    edge_width_fraction = 0.05  # Check outer 5% of each edge
+    min_coverage_fraction = 0.3  # Must cover at least 30% of the edge length
+
+    if orientation == Orientation.HORIZONTAL:
+        # Film runs left-right, so cut ends appear on left/right edges
+        edge_width = max(10, int(img_w * edge_width_fraction))
+
+        # Check left edge
+        left_region = sprocket_mask[:, :edge_width]
+        left_cols_with_bright = np.any(left_region > 0, axis=1)
+        left_coverage = np.sum(left_cols_with_bright) / img_h
+        if left_coverage >= min_coverage_fraction:
+            # Check if it's contiguous (not scattered sprocket holes)
+            # Find the largest contiguous vertical span
+            in_span = False
+            max_span = 0
+            current_span = 0
+            for has_bright in left_cols_with_bright:
+                if has_bright:
+                    if not in_span:
+                        in_span = True
+                        current_span = 1
+                    else:
+                        current_span += 1
+                else:
+                    if in_span:
+                        max_span = max(max_span, current_span)
+                        in_span = False
+            if in_span:
+                max_span = max(max_span, current_span)
+
+            # If the largest span is significant, it's likely a cut end
+            if max_span / img_h >= min_coverage_fraction:
+                cut_end.left = True
+
+        # Check right edge
+        right_region = sprocket_mask[:, img_w - edge_width :]
+        right_cols_with_bright = np.any(right_region > 0, axis=1)
+        right_coverage = np.sum(right_cols_with_bright) / img_h
+        if right_coverage >= min_coverage_fraction:
+            in_span = False
+            max_span = 0
+            current_span = 0
+            for has_bright in right_cols_with_bright:
+                if has_bright:
+                    if not in_span:
+                        in_span = True
+                        current_span = 1
+                    else:
+                        current_span += 1
+                else:
+                    if in_span:
+                        max_span = max(max_span, current_span)
+                        in_span = False
+            if in_span:
+                max_span = max(max_span, current_span)
+
+            if max_span / img_h >= min_coverage_fraction:
+                cut_end.right = True
+
+    else:
+        # Film runs top-bottom, so cut ends appear on top/bottom edges
+        edge_height = max(10, int(img_h * edge_width_fraction))
+
+        # Check top edge
+        top_region = sprocket_mask[:edge_height, :]
+        top_rows_with_bright = np.any(top_region > 0, axis=0)
+        top_coverage = np.sum(top_rows_with_bright) / img_w
+        if top_coverage >= min_coverage_fraction:
+            in_span = False
+            max_span = 0
+            current_span = 0
+            for has_bright in top_rows_with_bright:
+                if has_bright:
+                    if not in_span:
+                        in_span = True
+                        current_span = 1
+                    else:
+                        current_span += 1
+                else:
+                    if in_span:
+                        max_span = max(max_span, current_span)
+                        in_span = False
+            if in_span:
+                max_span = max(max_span, current_span)
+
+            if max_span / img_w >= min_coverage_fraction:
+                cut_end.top = True
+
+        # Check bottom edge
+        bottom_region = sprocket_mask[img_h - edge_height :, :]
+        bottom_rows_with_bright = np.any(bottom_region > 0, axis=0)
+        bottom_coverage = np.sum(bottom_rows_with_bright) / img_w
+        if bottom_coverage >= min_coverage_fraction:
+            in_span = False
+            max_span = 0
+            current_span = 0
+            for has_bright in bottom_rows_with_bright:
+                if has_bright:
+                    if not in_span:
+                        in_span = True
+                        current_span = 1
+                    else:
+                        current_span += 1
+                else:
+                    if in_span:
+                        max_span = max(max_span, current_span)
+                        in_span = False
+            if in_span:
+                max_span = max(max_span, current_span)
+
+            if max_span / img_w >= min_coverage_fraction:
+                cut_end.bottom = True
+
+    if visualizer:
+        visualizer.save_film_cut_end(sprocket_mask, orientation, cut_end)
+
+    return cut_end
+
+
+def filter_cut_end_from_sprocket_mask(
+    sprocket_mask: np.ndarray,
+    orientation: Orientation,
+    cut_end: FilmCutEnd,
+) -> np.ndarray:
+    """Remove cut end regions from the sprocket mask.
+
+    This prevents the cut end from being detected as sprocket holes and
+    affecting sprocket cropping.
+
+    Args:
+        sprocket_mask: Binary mask where sprocket holes are 255
+        orientation: Film orientation
+        cut_end: Detected film cut ends
+
+    Returns:
+        Filtered sprocket mask with cut end regions removed
+    """
+    if not cut_end.any_detected:
+        return sprocket_mask
+
+    filtered_mask = sprocket_mask.copy()
+    img_h, img_w = sprocket_mask.shape[:2]
+
+    # Remove a larger region to ensure the cut end doesn't affect cropping
+    removal_fraction = 0.10  # Remove outer 10% where cut is detected
+
+    if orientation == Orientation.HORIZONTAL:
+        removal_width = max(10, int(img_w * removal_fraction))
+        if cut_end.left:
+            filtered_mask[:, :removal_width] = 0
+        if cut_end.right:
+            filtered_mask[:, img_w - removal_width :] = 0
+    else:
+        removal_height = max(10, int(img_h * removal_fraction))
+        if cut_end.top:
+            filtered_mask[:removal_height, :] = 0
+        if cut_end.bottom:
+            filtered_mask[img_h - removal_height :, :] = 0
+
+    return filtered_mask
 
 
 def crop_sprocket_region(
@@ -725,8 +919,15 @@ def detect_frame_bounds(
     # Step 1: Detect sprocket holes to find valid frame region
     sprocket_mask = detect_sprocket_holes(img, visualizer)
     orientation = detect_sprocket_orientation(sprocket_mask, visualizer)
+
+    # Detect and filter out film cut ends before sprocket cropping
+    cut_end = detect_film_cut_end(sprocket_mask, orientation, visualizer)
+    sprocket_mask_filtered = filter_cut_end_from_sprocket_mask(
+        sprocket_mask, orientation, cut_end
+    )
+
     _, y_offset_top, y_offset_bottom, x_offset_left, x_offset_right = (
-        crop_sprocket_region(img, sprocket_mask, orientation, visualizer)
+        crop_sprocket_region(img, sprocket_mask_filtered, orientation, visualizer)
     )
 
     # Define valid frame region based on orientation

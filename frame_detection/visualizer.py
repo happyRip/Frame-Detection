@@ -11,7 +11,7 @@ import numpy as np
 from .models import Orientation
 
 if TYPE_CHECKING:
-    from .models import FrameBounds, Line, Margins
+    from .models import FilmCutEnd, FrameBounds, Line, Margins
 
 
 class DebugVisualizer:
@@ -165,6 +165,130 @@ class DebugVisualizer:
         fig.tight_layout()
         self.step += 1
         fig.savefig(self.output_dir / f"{self.step:02d}_sprocket_orientation.png", dpi=100)
+        plt.close(fig)
+
+    def save_film_cut_end(
+        self,
+        sprocket_mask: np.ndarray,
+        orientation: Orientation,
+        cut_end: FilmCutEnd,
+    ):
+        """Save visualization of film cut end detection.
+
+        Args:
+            sprocket_mask: Binary mask of bright areas
+            orientation: Film orientation
+            cut_end: Detected film cut ends
+        """
+        import matplotlib.pyplot as plt
+
+        img_h, img_w = sprocket_mask.shape[:2]
+
+        # Create a color visualization
+        vis = np.zeros((img_h, img_w, 3), dtype=np.uint8)
+        vis[sprocket_mask > 0] = (255, 255, 255)  # White for bright areas
+
+        # Define edge regions being checked
+        edge_width_fraction = 0.05
+        removal_fraction = 0.10
+
+        if orientation == Orientation.HORIZONTAL:
+            edge_width = max(10, int(img_w * edge_width_fraction))
+            removal_width = max(10, int(img_w * removal_fraction))
+
+            # Highlight detection regions
+            if cut_end.left:
+                # Show detected cut end in red
+                vis[:, :removal_width][sprocket_mask[:, :removal_width] > 0] = (0, 0, 255)
+            else:
+                # Show check region in blue (not detected)
+                overlay = vis[:, :edge_width].copy()
+                overlay[sprocket_mask[:, :edge_width] > 0] = (255, 128, 0)
+                vis[:, :edge_width] = overlay
+
+            if cut_end.right:
+                # Show detected cut end in red
+                vis[:, img_w - removal_width :][
+                    sprocket_mask[:, img_w - removal_width :] > 0
+                ] = (0, 0, 255)
+            else:
+                # Show check region in blue (not detected)
+                overlay = vis[:, img_w - edge_width :].copy()
+                overlay[sprocket_mask[:, img_w - edge_width :] > 0] = (255, 128, 0)
+                vis[:, img_w - edge_width :] = overlay
+
+            # Draw boundary lines
+            cv2.line(vis, (edge_width, 0), (edge_width, img_h), (0, 255, 255), 2)
+            cv2.line(
+                vis, (img_w - edge_width, 0), (img_w - edge_width, img_h), (0, 255, 255), 2
+            )
+        else:
+            edge_height = max(10, int(img_h * edge_width_fraction))
+            removal_height = max(10, int(img_h * removal_fraction))
+
+            if cut_end.top:
+                vis[:removal_height, :][sprocket_mask[:removal_height, :] > 0] = (0, 0, 255)
+            else:
+                overlay = vis[:edge_height, :].copy()
+                overlay[sprocket_mask[:edge_height, :] > 0] = (255, 128, 0)
+                vis[:edge_height, :] = overlay
+
+            if cut_end.bottom:
+                vis[img_h - removal_height :, :][
+                    sprocket_mask[img_h - removal_height :, :] > 0
+                ] = (0, 0, 255)
+            else:
+                overlay = vis[img_h - edge_height :, :].copy()
+                overlay[sprocket_mask[img_h - edge_height :, :] > 0] = (255, 128, 0)
+                vis[img_h - edge_height :, :] = overlay
+
+            # Draw boundary lines
+            cv2.line(vis, (0, edge_height), (img_w, edge_height), (0, 255, 255), 2)
+            cv2.line(
+                vis, (0, img_h - edge_height), (img_w, img_h - edge_height), (0, 255, 255), 2
+            )
+
+        # Create figure with visualization and status
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+        # Show mask with detected regions
+        axes[0].imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+        axes[0].set_title("Film Cut End Detection")
+        axes[0].axis("off")
+
+        # Show detection status
+        if orientation == Orientation.HORIZONTAL:
+            edges = [("Left", cut_end.left), ("Right", cut_end.right)]
+        else:
+            edges = [("Top", cut_end.top), ("Bottom", cut_end.bottom)]
+
+        labels = [e[0] for e in edges]
+        detected = [1 if e[1] else 0 for e in edges]
+        colors = ["red" if d else "green" for d in detected]
+
+        bars = axes[1].bar(labels, [1, 1], color=colors)
+        axes[1].set_ylim(0, 1.5)
+        axes[1].set_yticks([])
+        axes[1].set_title(f"Cut End Detection ({orientation.value})")
+
+        for i, (label, is_detected) in enumerate(edges):
+            status = "DETECTED" if is_detected else "Not detected"
+            axes[1].text(i, 0.5, status, ha="center", va="center", fontsize=12, color="white")
+
+        # Add legend
+        axes[0].text(
+            10,
+            30,
+            "White: bright areas | Blue: check region | Red: detected cut end",
+            fontsize=10,
+            color="white",
+            bbox=dict(boxstyle="round", facecolor="black", alpha=0.7),
+            transform=axes[0].transData,
+        )
+
+        fig.tight_layout()
+        self.step += 1
+        fig.savefig(self.output_dir / f"{self.step:02d}_film_cut_end.png", dpi=100)
         plt.close(fig)
 
     def save_sprocket_crop(

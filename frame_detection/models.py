@@ -179,6 +179,26 @@ class EdgeGroup:
 
 
 @dataclass
+class FilmCutEnd:
+    """Represents detection of film cut ends visible in the viewport.
+
+    When a film strip has been cut, the cut end may be visible as a large
+    bright area at the edge of the viewport (no film covering that area).
+    In landscape orientation, this appears on left/right edges.
+    """
+
+    left: bool = False
+    right: bool = False
+    top: bool = False
+    bottom: bool = False
+
+    @property
+    def any_detected(self) -> bool:
+        """Check if any cut end is detected."""
+        return self.left or self.right or self.top or self.bottom
+
+
+@dataclass
 class FrameBounds:
     """Represents detected frame boundaries."""
 
