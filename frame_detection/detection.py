@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from .models import EdgeGroup, FrameBounds, Line, Margins
+from .models import EdgeGroup, FrameBounds, Line, Margins, Orientation
 
 if TYPE_CHECKING:
     from .visualizer import DebugVisualizer
@@ -83,69 +83,165 @@ def detect_sprocket_holes(
     return sprocket_mask
 
 
+def detect_sprocket_orientation(
+    sprocket_mask: np.ndarray,
+    visualizer: DebugVisualizer | None = None,
+) -> Orientation:
+    """Detect orientation of sprocket holes (top/bottom vs left/right).
+
+    For 35mm film, sprocket holes run along both long edges. This function
+    determines whether those edges are horizontal (top/bottom) or vertical
+    (left/right) based on the distribution of detected sprocket pixels.
+
+    Args:
+        sprocket_mask: Binary mask where sprocket holes are marked as 255
+        visualizer: Optional debug visualizer
+
+    Returns:
+        "horizontal" if sprockets are on top/bottom edges,
+        "vertical" if sprockets are on left/right edges
+    """
+    if sprocket_mask.max() == 0:
+        # No sprockets detected, default to horizontal
+        return Orientation.HORIZONTAL
+
+    img_h, img_w = sprocket_mask.shape[:2]
+
+    # Define edge regions (outer 15% of each dimension)
+    edge_fraction = 0.15
+    h_margin = int(img_h * edge_fraction)
+    w_margin = int(img_w * edge_fraction)
+
+    # Count sprocket pixels in horizontal edges (top + bottom)
+    top_region = sprocket_mask[:h_margin, :]
+    bottom_region = sprocket_mask[img_h - h_margin :, :]
+    horizontal_pixels = np.sum(top_region > 0) + np.sum(bottom_region > 0)
+
+    # Count sprocket pixels in vertical edges (left + right)
+    left_region = sprocket_mask[:, :w_margin]
+    right_region = sprocket_mask[:, img_w - w_margin :]
+    vertical_pixels = np.sum(left_region > 0) + np.sum(right_region > 0)
+
+    # Determine orientation based on where sprocket pixels are concentrated
+    # Use a ratio to account for different region sizes
+    horizontal_density = horizontal_pixels / (2 * h_margin * img_w) if h_margin > 0 else 0
+    vertical_density = vertical_pixels / (2 * w_margin * img_h) if w_margin > 0 else 0
+
+    orientation = (
+        Orientation.VERTICAL if vertical_density > horizontal_density else Orientation.HORIZONTAL
+    )
+
+    if visualizer:
+        visualizer.save_sprocket_orientation(
+            sprocket_mask, orientation, horizontal_density, vertical_density
+        )
+
+    return orientation
+
+
 def crop_sprocket_region(
     img: np.ndarray,
     sprocket_mask: np.ndarray,
+    orientation: Orientation = Orientation.HORIZONTAL,
     visualizer: DebugVisualizer | None = None,
-) -> tuple[np.ndarray, int, int]:
+) -> tuple[np.ndarray, int, int, int, int]:
     """Crop out the region containing sprocket holes.
 
-    Sprocket holes on 35mm film run along both long edges (top and bottom).
-    This finds the sprocket regions and crops them from both edges.
+    Sprocket holes on 35mm film run along both long edges. Depending on
+    orientation, this crops from top/bottom (horizontal) or left/right (vertical).
 
     Args:
         img: Input image as numpy array
         sprocket_mask: Binary mask where sprocket holes are marked as 255
+        orientation: "horizontal" for top/bottom sprockets, "vertical" for left/right
         visualizer: Optional debug visualizer to save intermediate images
 
     Returns:
-        Tuple of (cropped_image, y_offset_top, y_offset_bottom) where offsets
-        indicate pixels cropped from top and bottom edges.
+        Tuple of (cropped_image, y_offset_top, y_offset_bottom, x_offset_left, x_offset_right)
+        where offsets indicate pixels cropped from each edge.
     """
     if sprocket_mask.max() == 0:
         if visualizer:
-            visualizer.save_sprocket_crop(img, img, 0, 0)
-        return img, 0, 0
+            visualizer.save_sprocket_crop(img, img, 0, 0, orientation)
+        return img, 0, 0, 0, 0
 
     img_h, img_w = img.shape[:2]
-    mid_y = img_h // 2
 
-    # Find rows containing sprocket pixels
-    rows_with_sprockets = np.any(sprocket_mask > 0, axis=1)
+    if orientation == Orientation.HORIZONTAL:
+        # Sprockets on top/bottom - crop rows
+        mid_y = img_h // 2
+        rows_with_sprockets = np.any(sprocket_mask > 0, axis=1)
 
-    if not np.any(rows_with_sprockets):
+        if not np.any(rows_with_sprockets):
+            if visualizer:
+                visualizer.save_sprocket_crop(img, img, 0, 0, orientation)
+            return img, 0, 0, 0, 0
+
+        sprocket_rows = np.where(rows_with_sprockets)[0]
+        margin = max(1, img_h // 500)
+
+        # Top crop: find lowest sprocket row in top half
+        top_sprockets = sprocket_rows[sprocket_rows < mid_y]
+        if len(top_sprockets) > 0:
+            crop_top = np.max(top_sprockets) + 1
+            crop_top = min(crop_top + margin, mid_y)
+        else:
+            crop_top = 0
+
+        # Bottom crop: find highest sprocket row in bottom half
+        bottom_sprockets = sprocket_rows[sprocket_rows >= mid_y]
+        if len(bottom_sprockets) > 0:
+            crop_bottom = np.min(bottom_sprockets)
+            crop_bottom = max(crop_bottom - margin, mid_y)
+        else:
+            crop_bottom = img_h
+
+        img_cropped = img[crop_top:crop_bottom, :]
+
         if visualizer:
-            visualizer.save_sprocket_crop(img, img, 0, 0)
-        return img, 0, 0
+            visualizer.save_sprocket_crop(
+                img, img_cropped, crop_top, img_h - crop_bottom, orientation
+            )
 
-    # Find crop boundaries for top and bottom
-    sprocket_rows = np.where(rows_with_sprockets)[0]
+        return img_cropped, crop_top, img_h - crop_bottom, 0, 0
 
-    # Small margin relative to resolution
-    margin = max(1, img_h // 500)
-
-    # Top crop: find lowest sprocket row in top half
-    top_sprockets = sprocket_rows[sprocket_rows < mid_y]
-    if len(top_sprockets) > 0:
-        crop_top = np.max(top_sprockets) + 1
-        crop_top = min(crop_top + margin, mid_y)
     else:
-        crop_top = 0
+        # Sprockets on left/right - crop columns
+        mid_x = img_w // 2
+        cols_with_sprockets = np.any(sprocket_mask > 0, axis=0)
 
-    # Bottom crop: find highest sprocket row in bottom half
-    bottom_sprockets = sprocket_rows[sprocket_rows >= mid_y]
-    if len(bottom_sprockets) > 0:
-        crop_bottom = np.min(bottom_sprockets)
-        crop_bottom = max(crop_bottom - margin, mid_y)
-    else:
-        crop_bottom = img_h
+        if not np.any(cols_with_sprockets):
+            if visualizer:
+                visualizer.save_sprocket_crop(img, img, 0, 0, orientation)
+            return img, 0, 0, 0, 0
 
-    img_cropped = img[crop_top:crop_bottom, :]
+        sprocket_cols = np.where(cols_with_sprockets)[0]
+        margin = max(1, img_w // 500)
 
-    if visualizer:
-        visualizer.save_sprocket_crop(img, img_cropped, crop_top, img_h - crop_bottom)
+        # Left crop: find rightmost sprocket column in left half
+        left_sprockets = sprocket_cols[sprocket_cols < mid_x]
+        if len(left_sprockets) > 0:
+            crop_left = np.max(left_sprockets) + 1
+            crop_left = min(crop_left + margin, mid_x)
+        else:
+            crop_left = 0
 
-    return img_cropped, crop_top, img_h - crop_bottom
+        # Right crop: find leftmost sprocket column in right half
+        right_sprockets = sprocket_cols[sprocket_cols >= mid_x]
+        if len(right_sprockets) > 0:
+            crop_right = np.min(right_sprockets)
+            crop_right = max(crop_right - margin, mid_x)
+        else:
+            crop_right = img_w
+
+        img_cropped = img[:, crop_left:crop_right]
+
+        if visualizer:
+            visualizer.save_sprocket_crop(
+                img, img_cropped, crop_left, img_w - crop_right, orientation
+            )
+
+        return img_cropped, 0, 0, crop_left, img_w - crop_right
 
 
 def detect_film_base_color(
@@ -153,6 +249,9 @@ def detect_film_base_color(
     sprocket_mask: np.ndarray,
     y_min: int,
     y_max: int,
+    x_min: int = 0,
+    x_max: int | None = None,
+    orientation: Orientation = Orientation.HORIZONTAL,
     visualizer: DebugVisualizer | None = None,
 ) -> np.ndarray:
     """Detect film base color from unexposed regions.
@@ -165,23 +264,40 @@ def detect_film_base_color(
         sprocket_mask: Binary mask of sprocket holes (255=hole)
         y_min: Top boundary of valid frame region (below top sprockets)
         y_max: Bottom boundary of valid frame region (above bottom sprockets)
+        x_min: Left boundary of valid frame region (after left sprockets)
+        x_max: Right boundary of valid frame region (before right sprockets)
+        orientation: "horizontal" for top/bottom sprockets, "vertical" for left/right
         visualizer: Optional debug visualizer
 
     Returns:
         Film base color as BGR numpy array of shape (3,)
     """
     img_h, img_w = img.shape[:2]
-    sample_mask = np.zeros((img_h, img_w), dtype=np.uint8)
-    has_sprocket_regions = y_min > 0 or y_max < img_h
+    if x_max is None:
+        x_max = img_w
 
-    if has_sprocket_regions:
-        # Sample from sprocket regions, excluding the holes
-        if y_min > 0:
-            sample_mask[:y_min, :] = 255
-        if y_max < img_h:
-            sample_mask[y_max:, :] = 255
-        # Exclude sprocket holes
-        sample_mask[sprocket_mask > 0] = 0
+    sample_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+
+    if orientation == Orientation.HORIZONTAL:
+        has_sprocket_regions = y_min > 0 or y_max < img_h
+        if has_sprocket_regions:
+            # Sample from top/bottom sprocket regions, excluding the holes
+            if y_min > 0:
+                sample_mask[:y_min, :] = 255
+            if y_max < img_h:
+                sample_mask[y_max:, :] = 255
+            # Exclude sprocket holes
+            sample_mask[sprocket_mask > 0] = 0
+    else:
+        has_sprocket_regions = x_min > 0 or x_max < img_w
+        if has_sprocket_regions:
+            # Sample from left/right sprocket regions, excluding the holes
+            if x_min > 0:
+                sample_mask[:, :x_min] = 255
+            if x_max < img_w:
+                sample_mask[:, x_max:] = 255
+            # Exclude sprocket holes
+            sample_mask[sprocket_mask > 0] = 0
 
     # Fallback: if no sprocket regions or insufficient samples, use image edges
     min_samples = 100
@@ -324,6 +440,8 @@ def classify_lines(
     edge_margins: Margins,
     y_min: int = 0,
     y_max: int | None = None,
+    x_min: int = 0,
+    x_max: int | None = None,
 ) -> FrameBounds:
     """Classify lines into edge groups based on position and orientation.
 
@@ -337,24 +455,26 @@ def classify_lines(
         edge_margins: Margins defining edge detection regions
         y_min: Minimum valid y coordinate (after sprocket cropping)
         y_max: Maximum valid y coordinate (after sprocket cropping)
+        x_min: Minimum valid x coordinate (after sprocket cropping)
+        x_max: Maximum valid x coordinate (after sprocket cropping)
 
     Returns:
         FrameBounds with lines grouped by edge
     """
     if y_max is None:
         y_max = img_h
+    if x_max is None:
+        x_max = img_w
 
     frame_bounds = FrameBounds()
 
     # Apply edge margins relative to the valid region (after sprocket cropping)
     valid_height = y_max - y_min
+    valid_width = x_max - x_min
     y_top_thresh = y_min + int(valid_height * edge_margins.top)
     y_bottom_thresh = y_min + int(valid_height * (1 - edge_margins.bottom))
-    x_left_thresh = int(img_w * edge_margins.left)
-    x_right_thresh = int(img_w * (1 - edge_margins.right))
-
-    mid_y = img_h / 2
-    mid_x = img_w / 2
+    x_left_thresh = x_min + int(valid_width * edge_margins.left)
+    x_right_thresh = x_min + int(valid_width * (1 - edge_margins.right))
 
     for line in lines:
         if line.is_horizontal:
@@ -501,7 +621,10 @@ def enforce_aspect_ratio(
     aspect_ratio: float,
     y_min: int,
     y_max: int,
+    x_min: int,
+    x_max: int,
     img_w: int,
+    img_h: int,
 ) -> tuple[int, int, int, int]:
     """Adjust bounds to enforce the correct aspect ratio.
 
@@ -511,9 +634,12 @@ def enforce_aspect_ratio(
     Args:
         left, right, top, bottom: Current bounds
         aspect_ratio: Expected aspect ratio (width/height)
-        y_min: Minimum valid y coordinate (sprocket boundary)
-        y_max: Maximum valid y coordinate (sprocket boundary)
+        y_min: Minimum valid y coordinate (sprocket boundary for horizontal)
+        y_max: Maximum valid y coordinate (sprocket boundary for horizontal)
+        x_min: Minimum valid x coordinate (sprocket boundary for vertical)
+        x_max: Maximum valid x coordinate (sprocket boundary for vertical)
         img_w: Image width for clamping
+        img_h: Image height for clamping
 
     Returns:
         Adjusted bounds (left, right, top, bottom) with correct aspect ratio
@@ -536,11 +662,14 @@ def enforce_aspect_ratio(
         top += delta // 2
         bottom -= delta - delta // 2
 
-    # Re-clamp after adjustment
-    left = max(0, left)
-    right = min(img_w, right)
-    top = max(y_min, top)
-    bottom = min(y_max, bottom)
+    # Re-clamp after adjustment (use appropriate boundaries based on orientation)
+    # For horizontal orientation: clamp y to y_min/y_max, x to full width
+    # For vertical orientation: clamp x to x_min/x_max, y to full height
+    # We use both constraints for safety
+    left = max(0, max(x_min, left)) if x_min > 0 else max(0, left)
+    right = min(img_w, min(x_max, right)) if x_max < img_w else min(img_w, right)
+    top = max(0, max(y_min, top)) if y_min > 0 else max(0, top)
+    bottom = min(img_h, min(y_max, bottom)) if y_max < img_h else min(img_h, bottom)
 
     return left, right, top, bottom
 
@@ -595,42 +724,62 @@ def detect_frame_bounds(
 
     # Step 1: Detect sprocket holes to find valid frame region
     sprocket_mask = detect_sprocket_holes(img, visualizer)
-    _, y_offset_top, y_offset_bottom = crop_sprocket_region(
-        img, sprocket_mask, visualizer
+    orientation = detect_sprocket_orientation(sprocket_mask, visualizer)
+    _, y_offset_top, y_offset_bottom, x_offset_left, x_offset_right = (
+        crop_sprocket_region(img, sprocket_mask, orientation, visualizer)
     )
+
+    # Define valid frame region based on orientation
     y_min = y_offset_top
     y_max = img_h - y_offset_bottom
+    x_min = x_offset_left
+    x_max = img_w - x_offset_right
 
-    if y_min >= y_max:
-        raise ValueError(
-            f"Invalid frame region detected: y_min={y_min} >= y_max={y_max}. "
-            "Sprocket detection may have failed for this image."
-        )
+    if orientation == Orientation.HORIZONTAL:
+        if y_min >= y_max:
+            raise ValueError(
+                f"Invalid frame region detected: y_min={y_min} >= y_max={y_max}. "
+                "Sprocket detection may have failed for this image."
+            )
+    else:
+        if x_min >= x_max:
+            raise ValueError(
+                f"Invalid frame region detected: x_min={x_min} >= x_max={x_max}. "
+                "Sprocket detection may have failed for this image."
+            )
 
     # Step 2: Normalize levels for better color detection
     img = normalize_levels(img, visualizer)
 
     # Step 3: Detect film base color from normalized image
     film_base_color = detect_film_base_color(
-        img, sprocket_mask, y_min, y_max, visualizer
+        img, sprocket_mask, y_min, y_max, x_min, x_max, orientation, visualizer
     )
 
     # Step 4: Create mask of film base regions
     film_base_mask = create_film_base_mask(img, film_base_color, visualizer=visualizer)
 
     # Crop mask to valid frame region to avoid detecting sprocket boundaries as edges
-    film_base_mask_cropped = film_base_mask[y_min:y_max, :]
+    if orientation == Orientation.HORIZONTAL:
+        film_base_mask_cropped = film_base_mask[y_min:y_max, :]
+        img_cropped = img[y_min:y_max, :]
+    else:
+        film_base_mask_cropped = film_base_mask[:, x_min:x_max]
+        img_cropped = img[:, x_min:x_max]
 
     if visualizer:
-        visualizer.save_film_base_mask_cropped(img, film_base_mask_cropped, y_min, y_max)
+        visualizer.save_film_base_mask_cropped(
+            img, film_base_mask_cropped, y_min, y_max, x_min, x_max, orientation
+        )
 
     # Step 5: Detect lines from film base mask boundaries (in each margin region)
-    img_cropped = img[y_min:y_max, :]
     lines = detect_lines(img_cropped, film_base_mask_cropped, edge_margins, visualizer)
 
     # Offset line coordinates back to original image space
-    if y_min > 0:
+    if orientation == "horizontal" and y_min > 0:
         lines = [line.offset_y(y_min) for line in lines]
+    elif orientation == Orientation.VERTICAL and x_min > 0:
+        lines = [line.offset_x(x_min) for line in lines]
 
     if visualizer:
         visualizer.save_lines(img, lines)
@@ -639,9 +788,11 @@ def detect_frame_bounds(
         raise ValueError("No lines detected")
 
     if visualizer:
-        visualizer.save_edge_margins(img, edge_margins, y_min, y_max)
+        visualizer.save_edge_margins(img, edge_margins, y_min, y_max, x_min, x_max)
 
-    frame_bounds = classify_lines(lines, img_h, img_w, edge_margins, y_min, y_max)
+    frame_bounds = classify_lines(
+        lines, img_h, img_w, edge_margins, y_min, y_max, x_min, x_max
+    )
 
     if visualizer:
         visualizer.save_classified_lines(img, frame_bounds)
@@ -694,12 +845,21 @@ def detect_frame_bounds(
         elif has_left and has_right:
             expected_width = right - left
         else:
-            height = int((y_max - y_min) * 0.9)
+            # Use the valid region based on orientation
+            if orientation == Orientation.HORIZONTAL:
+                height = int((y_max - y_min) * 0.9)
+            else:
+                height = int(img_h * 0.9)
             expected_width = int(height * aspect_ratio)
 
         if left is None and right is None:
-            left = (img_w - expected_width) // 2
-            right = (img_w + expected_width) // 2
+            if orientation == "vertical":
+                center_x = (x_min + x_max) // 2
+                left = center_x - expected_width // 2
+                right = center_x + expected_width // 2
+            else:
+                left = (img_w - expected_width) // 2
+                right = (img_w + expected_width) // 2
         elif left is None:
             left = right - expected_width
         elif right is None:
@@ -707,7 +867,10 @@ def detect_frame_bounds(
 
         expected_height = int((right - left) / aspect_ratio)
         if top is None and bottom is None:
-            center_y = (y_min + y_max) // 2
+            if orientation == Orientation.HORIZONTAL:
+                center_y = (y_min + y_max) // 2
+            else:
+                center_y = img_h // 2
             top = center_y - expected_height // 2
             bottom = center_y + expected_height // 2
         elif top is None:
@@ -716,10 +879,16 @@ def detect_frame_bounds(
             bottom = top + expected_height
 
     # Clamp coordinates to image bounds (excluding sprocket regions)
-    left = max(0, left)
-    right = min(img_w, right)
-    top = max(y_min, top)
-    bottom = min(y_max, bottom)
+    if orientation == Orientation.HORIZONTAL:
+        left = max(0, left)
+        right = min(img_w, right)
+        top = max(y_min, top)
+        bottom = min(y_max, bottom)
+    else:
+        left = max(x_min, left)
+        right = min(x_max, right)
+        top = max(0, top)
+        bottom = min(img_h, bottom)
 
     if right <= left or bottom <= top:
         raise ValueError("Invalid frame coordinates detected")
@@ -731,7 +900,7 @@ def detect_frame_bounds(
 
     # Enforce correct aspect ratio
     left, right, top, bottom = enforce_aspect_ratio(
-        left, right, top, bottom, aspect_ratio, y_min, y_max, img_w
+        left, right, top, bottom, aspect_ratio, y_min, y_max, x_min, x_max, img_w, img_h
     )
 
     if visualizer:

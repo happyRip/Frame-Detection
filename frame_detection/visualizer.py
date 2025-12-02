@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
+from .models import Orientation
+
 if TYPE_CHECKING:
     from .models import FrameBounds, Line, Margins
 
@@ -120,37 +122,98 @@ class DebugVisualizer:
             plt.close(fig)
             self.step += 1
 
+    def save_sprocket_orientation(
+        self,
+        sprocket_mask: np.ndarray,
+        orientation: Orientation,
+        horizontal_density: float,
+        vertical_density: float,
+    ):
+        """Save visualization of sprocket orientation detection.
+
+        Args:
+            sprocket_mask: Binary mask of sprocket holes
+            orientation: Detected orientation ("horizontal" or "vertical")
+            horizontal_density: Density of sprocket pixels in horizontal edges
+            vertical_density: Density of sprocket pixels in vertical edges
+        """
+        import matplotlib.pyplot as plt
+
+        img_h, img_w = sprocket_mask.shape[:2]
+
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        # Show sprocket mask
+        axes[0].imshow(sprocket_mask, cmap="gray")
+        axes[0].set_title(f"Sprocket Mask\nDetected: {orientation.value.upper()}")
+        axes[0].axis("off")
+
+        # Show density comparison
+        labels = ["Horizontal\n(top/bottom)", "Vertical\n(left/right)"]
+        densities = [horizontal_density, vertical_density]
+        colors = ["green" if orientation == Orientation.HORIZONTAL else "gray",
+                  "green" if orientation == Orientation.VERTICAL else "gray"]
+        bars = axes[1].bar(labels, densities, color=colors)
+        axes[1].set_ylabel("Sprocket Pixel Density")
+        axes[1].set_title("Orientation Detection")
+
+        # Add value labels on bars
+        for bar, density in zip(bars, densities):
+            axes[1].text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                        f"{density:.4f}", ha="center", va="bottom")
+
+        fig.tight_layout()
+        self.step += 1
+        fig.savefig(self.output_dir / f"{self.step:02d}_sprocket_orientation.png", dpi=100)
+        plt.close(fig)
+
     def save_sprocket_crop(
         self,
         img: np.ndarray,
         img_cropped: np.ndarray,
-        y_offset_top: int,
-        y_offset_bottom: int,
+        offset1: int,
+        offset2: int,
+        orientation: Orientation = Orientation.HORIZONTAL,
     ):
         """Save visualization of sprocket region cropping.
 
         Args:
             img: Original image
             img_cropped: Image after cropping sprocket regions
-            y_offset_top: Pixels cropped from top
-            y_offset_bottom: Pixels cropped from bottom
+            offset1: Pixels cropped from top (horizontal) or left (vertical)
+            offset2: Pixels cropped from bottom (horizontal) or right (vertical)
+            orientation: "horizontal" for top/bottom, "vertical" for left/right
         """
         vis = img.copy()
         img_h, img_w = img.shape[:2]
 
-        if y_offset_top > 0 or y_offset_bottom > 0:
+        if offset1 > 0 or offset2 > 0:
             overlay = vis.copy()
-            # Shade cropped top region
-            if y_offset_top > 0:
-                overlay[:y_offset_top, :] = (0, 0, 128)  # Dark red overlay
-                cv2.line(vis, (0, y_offset_top), (img_w, y_offset_top), (0, 255, 255), 3)
-            # Shade cropped bottom region
-            if y_offset_bottom > 0:
-                crop_bottom = img_h - y_offset_bottom
-                overlay[crop_bottom:, :] = (0, 0, 128)  # Dark red overlay
-                cv2.line(vis, (0, crop_bottom), (img_w, crop_bottom), (0, 255, 255), 3)
+
+            if orientation == Orientation.HORIZONTAL:
+                # Shade cropped top region
+                if offset1 > 0:
+                    overlay[:offset1, :] = (0, 0, 128)  # Dark red overlay
+                    cv2.line(vis, (0, offset1), (img_w, offset1), (0, 255, 255), 3)
+                # Shade cropped bottom region
+                if offset2 > 0:
+                    crop_bottom = img_h - offset2
+                    overlay[crop_bottom:, :] = (0, 0, 128)  # Dark red overlay
+                    cv2.line(vis, (0, crop_bottom), (img_w, crop_bottom), (0, 255, 255), 3)
+            else:
+                # Shade cropped left region
+                if offset1 > 0:
+                    overlay[:, :offset1] = (0, 0, 128)  # Dark red overlay
+                    cv2.line(vis, (offset1, 0), (offset1, img_h), (0, 255, 255), 3)
+                # Shade cropped right region
+                if offset2 > 0:
+                    crop_right = img_w - offset2
+                    overlay[:, crop_right:] = (0, 0, 128)  # Dark red overlay
+                    cv2.line(vis, (crop_right, 0), (crop_right, img_h), (0, 255, 255), 3)
+
             cv2.addWeighted(overlay, 0.5, vis, 0.5, 0, vis)
-            cv2.putText(vis, "SPROCKET REGIONS", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
+            orient_label = "TOP/BOTTOM" if orientation == Orientation.HORIZONTAL else "LEFT/RIGHT"
+            cv2.putText(vis, f"SPROCKET REGIONS ({orient_label})", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
         else:
             cv2.putText(vis, "No sprocket crop", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
 
@@ -290,6 +353,9 @@ class DebugVisualizer:
         film_base_mask_cropped: np.ndarray,
         y_min: int,
         y_max: int,
+        x_min: int = 0,
+        x_max: int | None = None,
+        orientation: Orientation = Orientation.HORIZONTAL,
     ):
         """Save visualization of film base mask with sprocket areas excluded.
 
@@ -298,28 +364,53 @@ class DebugVisualizer:
             film_base_mask_cropped: Binary mask cropped to valid region only
             y_min: Top boundary of valid frame region
             y_max: Bottom boundary of valid frame region
+            x_min: Left boundary of valid frame region
+            x_max: Right boundary of valid frame region
+            orientation: Sprocket orientation
         """
         vis = img.copy()
         img_h, img_w = img.shape[:2]
+        if x_max is None:
+            x_max = img_w
 
-        # Shade excluded sprocket regions in dark red
-        if y_min > 0:
-            vis[:y_min, :] = (vis[:y_min, :] * 0.3 + np.array([0, 0, 100])).astype(
-                np.uint8
-            )
-        if y_max < img_h:
-            vis[y_max:, :] = (vis[y_max:, :] * 0.3 + np.array([0, 0, 100])).astype(
-                np.uint8
-            )
+        if orientation == Orientation.HORIZONTAL:
+            # Shade excluded top/bottom sprocket regions in dark red
+            if y_min > 0:
+                vis[:y_min, :] = (vis[:y_min, :] * 0.3 + np.array([0, 0, 100])).astype(
+                    np.uint8
+                )
+            if y_max < img_h:
+                vis[y_max:, :] = (vis[y_max:, :] * 0.3 + np.array([0, 0, 100])).astype(
+                    np.uint8
+                )
 
-        # Overlay film base mask in magenta (in valid region)
-        overlay = vis.copy()
-        overlay[y_min:y_max, :][film_base_mask_cropped > 0] = (255, 0, 255)
-        cv2.addWeighted(overlay, 0.4, vis, 0.6, 0, vis)
+            # Overlay film base mask in magenta (in valid region)
+            overlay = vis.copy()
+            overlay[y_min:y_max, :][film_base_mask_cropped > 0] = (255, 0, 255)
+            cv2.addWeighted(overlay, 0.4, vis, 0.6, 0, vis)
 
-        # Draw boundary lines for valid region
-        cv2.line(vis, (0, y_min), (img_w, y_min), (0, 255, 255), 2)
-        cv2.line(vis, (0, y_max), (img_w, y_max), (0, 255, 255), 2)
+            # Draw boundary lines for valid region
+            cv2.line(vis, (0, y_min), (img_w, y_min), (0, 255, 255), 2)
+            cv2.line(vis, (0, y_max), (img_w, y_max), (0, 255, 255), 2)
+        else:
+            # Shade excluded left/right sprocket regions in dark red
+            if x_min > 0:
+                vis[:, :x_min] = (vis[:, :x_min] * 0.3 + np.array([0, 0, 100])).astype(
+                    np.uint8
+                )
+            if x_max < img_w:
+                vis[:, x_max:] = (vis[:, x_max:] * 0.3 + np.array([0, 0, 100])).astype(
+                    np.uint8
+                )
+
+            # Overlay film base mask in magenta (in valid region)
+            overlay = vis.copy()
+            overlay[:, x_min:x_max][film_base_mask_cropped > 0] = (255, 0, 255)
+            cv2.addWeighted(overlay, 0.4, vis, 0.6, 0, vis)
+
+            # Draw boundary lines for valid region
+            cv2.line(vis, (x_min, 0), (x_min, img_h), (0, 255, 255), 2)
+            cv2.line(vis, (x_max, 0), (x_max, img_h), (0, 255, 255), 2)
 
         cv2.putText(
             vis,
@@ -433,6 +524,8 @@ class DebugVisualizer:
         edge_margins: Margins,
         y_min: int = 0,
         y_max: int | None = None,
+        x_min: int = 0,
+        x_max: int | None = None,
     ):
         """Save visualization of edge margin zones for line detection.
 
@@ -441,19 +534,24 @@ class DebugVisualizer:
             edge_margins: Margins object with (top, right, bottom, left) fractions
             y_min: Minimum valid y coordinate (after sprocket cropping)
             y_max: Maximum valid y coordinate (after sprocket cropping)
+            x_min: Minimum valid x coordinate (after sprocket cropping)
+            x_max: Maximum valid x coordinate (after sprocket cropping)
         """
         vis = img.copy()
         img_h, img_w = img.shape[:2]
 
         if y_max is None:
             y_max = img_h
+        if x_max is None:
+            x_max = img_w
 
         # Apply edge margins relative to the valid region (after sprocket cropping)
         valid_height = y_max - y_min
+        valid_width = x_max - x_min
         y_top = y_min + int(valid_height * edge_margins.top)
         y_bottom = y_min + int(valid_height * (1 - edge_margins.bottom))
-        x_left = int(img_w * edge_margins.left)
-        x_right = int(img_w * (1 - edge_margins.right))
+        x_left = x_min + int(valid_width * edge_margins.left)
+        x_right = x_min + int(valid_width * (1 - edge_margins.right))
 
         overlay = vis.copy()
         # Shade edge zones in green (where lines are considered)

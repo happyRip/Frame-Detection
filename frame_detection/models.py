@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Literal
 
 import numpy as np
+
+
+class Orientation(Enum):
+    """Orientation of sprocket holes on the film."""
+
+    HORIZONTAL = "horizontal"  # Sprockets on top/bottom edges
+    VERTICAL = "vertical"  # Sprockets on left/right edges
 
 
 @dataclass
@@ -110,6 +118,10 @@ class Line:
     def offset_y(self, delta: int) -> Line:
         """Return new line with y coordinates offset by delta."""
         return Line(self.x1, self.y1 + delta, self.x2, self.y2 + delta)
+
+    def offset_x(self, delta: int) -> Line:
+        """Return new line with x coordinates offset by delta."""
+        return Line(self.x1 + delta, self.y1, self.x2 + delta, self.y2)
 
     def as_tuple(self) -> tuple[int, int, int, int]:
         """Return line as (x1, y1, x2, y2) tuple."""
