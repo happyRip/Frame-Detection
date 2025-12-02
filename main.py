@@ -78,7 +78,7 @@ def parse_args():
     parser.add_argument(
         "--crop-in",
         type=float,
-        default=0.85,
+        default=1.5,
         help="Percentage to crop inward from detected edges (0-100)",
     )
     parser.add_argument(
@@ -120,6 +120,9 @@ def main():
     edge_margins = Margins.parse(args.edge_margin)
     ignore_margins = Margins.parse(args.ignore_margin)
 
+    # Keep a copy of original image for debug visualization
+    img_original = img.copy() if visualizer else None
+
     try:
         frame_bounds, bounds = detect_frame_bounds(
             img, aspect_ratio, visualizer, args.crop_in, edge_margins, ignore_margins
@@ -137,6 +140,11 @@ def main():
         bottom_frac = bottom / img_h
         angle = 0.0  # TODO: calculate rotation angle
 
+        if visualizer:
+            visualizer.save_coords_output(
+                img_original, bounds, left_frac, right_frac, top_frac, bottom_frac
+            )
+
         output = f"{left_frac}\n{right_frac}\n{top_frac}\n{bottom_frac}\n{angle}"
         if args.output:
             with open(args.output, "w") as f:
@@ -150,7 +158,9 @@ def main():
             output_path = args.output
         else:
             delim = args.delim or detect_delim(args.input) or args.default_delim
-            output_path = build_output_filename(args.input, args.prefix, args.suffix, delim)
+            output_path = build_output_filename(
+                args.input, args.prefix, args.suffix, delim
+            )
 
         cv2.imwrite(output_path, crop)
 

@@ -564,3 +564,44 @@ class DebugVisualizer:
         cv2.rectangle(vis, (bounds[LEFT], bounds[TOP]),
                       (bounds[RIGHT], bounds[BOTTOM]), (0, 255, 0), 3)
         self._save("bounds_final", vis)
+
+    def save_coords_output(
+        self,
+        img: np.ndarray,
+        bounds: list[int],
+        left_frac: float,
+        right_frac: float,
+        top_frac: float,
+        bottom_frac: float,
+    ):
+        """Save visualization of final coords output on original image.
+
+        Args:
+            img: Original input image (before any processing)
+            bounds: Pixel bounds [left, right, top, bottom]
+            left_frac, right_frac, top_frac, bottom_frac: Fractional coordinates (0.0-1.0)
+        """
+        LEFT, RIGHT, TOP, BOTTOM = 0, 1, 2, 3
+        vis = img.copy()
+        img_h, img_w = img.shape[:2]
+
+        # Draw rectangle at pixel bounds
+        cv2.rectangle(
+            vis,
+            (bounds[LEFT], bounds[TOP]),
+            (bounds[RIGHT], bounds[BOTTOM]),
+            (0, 255, 0),
+            3,
+        )
+
+        # Add text showing pixel and fraction values
+        cv2.putText(vis, "COORDS OUTPUT (on original image)", (10, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+        cv2.putText(vis, f"Image size: {img_w} x {img_h}", (10, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.putText(vis, f"Pixel: L={bounds[LEFT]} R={bounds[RIGHT]} T={bounds[TOP]} B={bounds[BOTTOM]}", (10, 120),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.putText(vis, f"Frac:  L={left_frac:.4f} R={right_frac:.4f} T={top_frac:.4f} B={bottom_frac:.4f}", (10, 160),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+        self._save("coords_output", vis)

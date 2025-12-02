@@ -604,6 +604,12 @@ def detect_frame_bounds(
     y_min = y_offset_top
     y_max = img_h - y_offset_bottom
 
+    if y_min >= y_max:
+        raise ValueError(
+            f"Invalid frame region detected: y_min={y_min} >= y_max={y_max}. "
+            "Sprocket detection may have failed for this image."
+        )
+
     # Step 2: Normalize levels for better color detection
     img = normalize_levels(img, visualizer)
 
