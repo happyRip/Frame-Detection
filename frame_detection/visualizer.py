@@ -817,37 +817,22 @@ class DebugVisualizer:
     def save_edge_margins(
         self,
         img: np.ndarray,
-        edge_margins: Margins,
-        y_min: int = 0,
-        y_max: int | None = None,
-        x_min: int = 0,
-        x_max: int | None = None,
+        x_left: int,
+        x_right: int,
+        y_top: int,
+        y_bottom: int,
     ):
         """Save visualization of edge margin zones for line detection.
 
         Args:
             img: Image being analyzed
-            edge_margins: Margins object with (top, right, bottom, left) fractions
-            y_min: Minimum valid y coordinate (after sprocket cropping)
-            y_max: Maximum valid y coordinate (after sprocket cropping)
-            x_min: Minimum valid x coordinate (after sprocket cropping)
-            x_max: Maximum valid x coordinate (after sprocket cropping)
+            x_left: Left margin boundary (x coordinate)
+            x_right: Right margin boundary (x coordinate)
+            y_top: Top margin boundary (y coordinate)
+            y_bottom: Bottom margin boundary (y coordinate)
         """
         vis = img.copy()
         img_h, img_w = img.shape[:2]
-
-        if y_max is None:
-            y_max = img_h
-        if x_max is None:
-            x_max = img_w
-
-        # Apply edge margins relative to the valid region (after sprocket cropping)
-        valid_height = y_max - y_min
-        valid_width = x_max - x_min
-        y_top = y_min + int(valid_height * edge_margins.top)
-        y_bottom = y_min + int(valid_height * (1 - edge_margins.bottom))
-        x_left = x_min + int(valid_width * edge_margins.left)
-        x_right = x_min + int(valid_width * (1 - edge_margins.right))
 
         overlay = vis.copy()
         # Shade edge zones in green (where lines are considered)

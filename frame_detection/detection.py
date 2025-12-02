@@ -1075,6 +1075,87 @@ def create_film_base_mask(
     return film_base_mask
 
 
+def _calculate_ratio_aware_margins(
+    img_w: int,
+    img_h: int,
+    aspect_ratio: float,
+    edge_margin_percent: float,
+    y_min: int = 0,
+    y_max: int | None = None,
+    x_min: int = 0,
+    x_max: int | None = None,
+) -> tuple[int, int, int, int]:
+    """Calculate edge margins so the inner zone has the correct aspect ratio.
+
+    Uses the tight/loose approach similar to film base detection:
+    - The tight axis (less room relative to target ratio) uses edge_margin_percent
+    - The loose axis margin is calculated to maintain the aspect ratio
+
+    Args:
+        img_w: Image width
+        img_h: Image height
+        aspect_ratio: Target aspect ratio (width/height) for the inner zone
+        edge_margin_percent: Margin percentage for the tight axis (0-1, e.g., 0.3 for 30%)
+        y_min: Minimum valid y coordinate (after sprocket cropping)
+        y_max: Maximum valid y coordinate (after sprocket cropping)
+        x_min: Minimum valid x coordinate (after sprocket cropping)
+        x_max: Maximum valid x coordinate (after sprocket cropping)
+
+    Returns:
+        Tuple of (left_margin, right_margin, top_margin, bottom_margin) as pixel positions
+        where left_margin/top_margin are from edge, right_margin/bottom_margin are from edge
+    """
+    if y_max is None:
+        y_max = img_h
+    if x_max is None:
+        x_max = img_w
+
+    # Work within the valid region (after sprocket cropping)
+    valid_width = x_max - x_min
+    valid_height = y_max - y_min
+
+    if valid_width <= 0 or valid_height <= 0:
+        # Fallback: use symmetric margins
+        return (
+            int(img_w * edge_margin_percent),
+            int(img_w * (1 - edge_margin_percent)),
+            int(img_h * edge_margin_percent),
+            int(img_h * (1 - edge_margin_percent)),
+        )
+
+    # Calculate the aspect ratio of the valid region
+    valid_ar = valid_width / valid_height
+
+    if valid_ar > aspect_ratio:
+        # Valid region is wider than target - vertical axis is tight (height limiting)
+        # Use edge_margin_percent for top/bottom margins
+        margin_y = valid_height * edge_margin_percent
+        inner_h = valid_height - 2 * margin_y
+        inner_w = inner_h * aspect_ratio
+        margin_x = (valid_width - inner_w) / 2
+    else:
+        # Valid region is taller than target - horizontal axis is tight (width limiting)
+        # Use edge_margin_percent for left/right margins
+        margin_x = valid_width * edge_margin_percent
+        inner_w = valid_width - 2 * margin_x
+        inner_h = inner_w / aspect_ratio
+        margin_y = (valid_height - inner_h) / 2
+
+    # Convert to absolute pixel positions
+    left_margin = x_min + int(margin_x)
+    right_margin = x_min + int(valid_width - margin_x)
+    top_margin = y_min + int(margin_y)
+    bottom_margin = y_min + int(valid_height - margin_y)
+
+    # Ensure margins are within bounds
+    left_margin = max(0, min(left_margin, img_w))
+    right_margin = max(0, min(right_margin, img_w))
+    top_margin = max(0, min(top_margin, img_h))
+    bottom_margin = max(0, min(bottom_margin, img_h))
+
+    return left_margin, right_margin, top_margin, bottom_margin
+
+
 def detect_lines(
     img: np.ndarray,
     film_base_mask: np.ndarray,
@@ -1082,6 +1163,11 @@ def detect_lines(
     orientation: Orientation = Orientation.HORIZONTAL,
     curve1: np.ndarray | None = None,
     curve2: np.ndarray | None = None,
+    aspect_ratio: float | None = None,
+    y_min: int = 0,
+    y_max: int | None = None,
+    x_min: int = 0,
+    x_max: int | None = None,
     visualizer: DebugVisualizer | None = None,
 ) -> list[Line]:
     """Detect lines from film base mask boundaries using Hough transform.
@@ -1089,13 +1175,24 @@ def detect_lines(
     Detects lines separately in each margin region (top, bottom, left, right)
     to ensure all frame edges are found.
 
+    When aspect_ratio is provided, uses the tight/loose approach to calculate
+    margins so that the inner zone (where no lines are searched) has the
+    correct aspect ratio. The tight axis uses the edge_margin percentage,
+    and the loose axis margin is calculated to maintain the ratio.
+
     Args:
         img: Input image (for visualization only)
         film_base_mask: Binary mask where film base regions are 255
         edge_margins: Margins defining the regions to search for each edge
+            (uses the maximum of left/right or top/bottom as the tight margin)
         orientation: Film orientation for curve masking
         curve1: Fitted curve for top (horizontal) or left (vertical) boundary
         curve2: Fitted curve for bottom (horizontal) or right (vertical) boundary
+        aspect_ratio: Target aspect ratio for ratio-aware margin calculation
+        y_min: Minimum valid y coordinate (after sprocket cropping)
+        y_max: Maximum valid y coordinate (after sprocket cropping)
+        x_min: Minimum valid x coordinate (after sprocket cropping)
+        x_max: Maximum valid x coordinate (after sprocket cropping)
         visualizer: Optional debug visualizer
 
     Returns:
@@ -1114,10 +1211,23 @@ def detect_lines(
         visualizer.save_edges(edges)
 
     # Define margin boundaries
-    left_margin = int(img_w * edge_margins.left)
-    right_margin = int(img_w * (1 - edge_margins.right))
-    top_margin = int(img_h * edge_margins.top)
-    bottom_margin = int(img_h * (1 - edge_margins.bottom))
+    if aspect_ratio is not None:
+        # Use ratio-aware margins: tight axis uses the specified margin,
+        # loose axis is calculated to maintain aspect ratio
+        edge_margin_percent = max(
+            edge_margins.left, edge_margins.right,
+            edge_margins.top, edge_margins.bottom
+        )
+        left_margin, right_margin, top_margin, bottom_margin = _calculate_ratio_aware_margins(
+            img_w, img_h, aspect_ratio, edge_margin_percent,
+            y_min, y_max, x_min, x_max
+        )
+    else:
+        # Use fixed margins as before
+        left_margin = int(img_w * edge_margins.left)
+        right_margin = int(img_w * (1 - edge_margins.right))
+        top_margin = int(img_h * edge_margins.top)
+        bottom_margin = int(img_h * (1 - edge_margins.bottom))
 
     all_lines = []
 
@@ -1129,21 +1239,28 @@ def detect_lines(
         ("bottom", edges[bottom_margin:, :], bottom_margin, 0),
     ]
 
+    # Calculate Hough parameters based on the valid region size, not search region size
+    # This ensures consistent line detection regardless of margin calculation method
+    if y_max is None:
+        y_max = img_h
+    if x_max is None:
+        x_max = img_w
+    valid_height = y_max - y_min
+    valid_width = x_max - x_min
+    base_dim = min(valid_height, valid_width) if valid_height > 0 and valid_width > 0 else min(img_h, img_w)
+
     for name, region_edges, y_offset, x_offset in regions:
         if region_edges.size == 0:
             continue
 
-        # Calculate parameters based on region dimensions
-        region_h, region_w = region_edges.shape[:2]
-        min_dim = min(region_h, region_w)
-
+        # Use base_dim (from valid region) for consistent Hough parameters
         raw_lines = cv2.HoughLinesP(
             region_edges,
             rho=1,
             theta=np.pi / 180,
             threshold=30,
-            minLineLength=int(min_dim * 0.3),
-            maxLineGap=min_dim // 5,
+            minLineLength=int(base_dim * 0.3),
+            maxLineGap=base_dim // 5,
         )
 
         if raw_lines is not None:
@@ -1171,11 +1288,16 @@ def classify_lines(
     y_max: int | None = None,
     x_min: int = 0,
     x_max: int | None = None,
+    aspect_ratio: float | None = None,
 ) -> FrameBounds:
     """Classify lines into edge groups based on position and orientation.
 
     Only considers lines near the edges of the image to avoid false positives
     from image content in the middle.
+
+    When aspect_ratio is provided, uses the tight/loose approach to calculate
+    classification thresholds so that the inner zone (where lines are ignored)
+    has the correct aspect ratio.
 
     Args:
         lines: Detected Line objects
@@ -1186,6 +1308,7 @@ def classify_lines(
         y_max: Maximum valid y coordinate (after sprocket cropping)
         x_min: Minimum valid x coordinate (after sprocket cropping)
         x_max: Maximum valid x coordinate (after sprocket cropping)
+        aspect_ratio: Target aspect ratio for ratio-aware threshold calculation
 
     Returns:
         FrameBounds with lines grouped by edge
@@ -1197,13 +1320,25 @@ def classify_lines(
 
     frame_bounds = FrameBounds()
 
-    # Apply edge margins relative to the valid region (after sprocket cropping)
-    valid_height = y_max - y_min
-    valid_width = x_max - x_min
-    y_top_thresh = y_min + int(valid_height * edge_margins.top)
-    y_bottom_thresh = y_min + int(valid_height * (1 - edge_margins.bottom))
-    x_left_thresh = x_min + int(valid_width * edge_margins.left)
-    x_right_thresh = x_min + int(valid_width * (1 - edge_margins.right))
+    # Calculate classification thresholds
+    if aspect_ratio is not None:
+        # Use ratio-aware margins: inner zone has correct aspect ratio
+        edge_margin_percent = max(
+            edge_margins.left, edge_margins.right,
+            edge_margins.top, edge_margins.bottom
+        )
+        x_left_thresh, x_right_thresh, y_top_thresh, y_bottom_thresh = _calculate_ratio_aware_margins(
+            img_w, img_h, aspect_ratio, edge_margin_percent,
+            y_min, y_max, x_min, x_max
+        )
+    else:
+        # Apply edge margins relative to the valid region (after sprocket cropping)
+        valid_height = y_max - y_min
+        valid_width = x_max - x_min
+        y_top_thresh = y_min + int(valid_height * edge_margins.top)
+        y_bottom_thresh = y_min + int(valid_height * (1 - edge_margins.bottom))
+        x_left_thresh = x_min + int(valid_width * edge_margins.left)
+        x_right_thresh = x_min + int(valid_width * (1 - edge_margins.right))
 
     for line in lines:
         if line.is_horizontal:
@@ -1565,9 +1700,11 @@ def detect_frame_bounds(
 
     # Step 5: Detect lines from film base mask boundaries (in each margin region)
     # Pass original mask - edges will be masked using curves inside detect_lines
+    # Use ratio-aware margins so the inner zone has the correct aspect ratio
     lines = detect_lines(
         img, film_base_mask, edge_margins, orientation,
-        sprocket_curve1, sprocket_curve2, visualizer
+        sprocket_curve1, sprocket_curve2, aspect_ratio,
+        y_min, y_max, x_min, x_max, visualizer
     )
 
     if visualizer:
@@ -1576,11 +1713,21 @@ def detect_frame_bounds(
     if not lines:
         raise ValueError("No lines detected")
 
+    # Calculate the actual margins used for visualization
+    edge_margin_percent = max(
+        edge_margins.left, edge_margins.right,
+        edge_margins.top, edge_margins.bottom
+    )
+    left_margin, right_margin, top_margin, bottom_margin = _calculate_ratio_aware_margins(
+        img_w, img_h, aspect_ratio, edge_margin_percent,
+        y_min, y_max, x_min, x_max
+    )
+
     if visualizer:
-        visualizer.save_edge_margins(img, edge_margins, y_min, y_max, x_min, x_max)
+        visualizer.save_edge_margins(img, left_margin, right_margin, top_margin, bottom_margin)
 
     frame_bounds = classify_lines(
-        lines, img_h, img_w, edge_margins, y_min, y_max, x_min, x_max
+        lines, img_h, img_w, edge_margins, y_min, y_max, x_min, x_max, aspect_ratio
     )
 
     if visualizer:
