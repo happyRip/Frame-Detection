@@ -85,6 +85,105 @@ class DebugVisualizer:
         fig.savefig(self.output_dir / f"{self.step:02d}_normalize_levels.png", dpi=100)
         plt.close(fig)
 
+    def save_sprocket_detection_comparison(
+        self,
+        img: np.ndarray,
+        bright_mask: np.ndarray,
+        dark_mask: np.ndarray,
+        bright_coverage: float,
+        bright_edge_conc: float,
+        dark_coverage: float,
+        dark_edge_conc: float,
+        chosen: str,
+        reason: str,
+    ):
+        """Save comparison of bright vs dark sprocket detection methods.
+
+        Args:
+            img: Original image
+            bright_mask: Mask from bright sprocket detection
+            dark_mask: Mask from dark sprocket detection
+            bright_coverage: Coverage ratio for bright mask
+            bright_edge_conc: Edge concentration for bright mask
+            dark_coverage: Coverage ratio for dark mask
+            dark_edge_conc: Edge concentration for dark mask
+            chosen: Which method was chosen ("bright", "dark", or "fallback")
+            reason: Explanation of why this method was chosen
+        """
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+
+        # Row 1: Original image and both masks
+        axes[0, 0].imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        axes[0, 0].set_title("Original Image")
+        axes[0, 0].axis("off")
+
+        # Bright mask visualization
+        bright_vis = np.zeros((*bright_mask.shape, 3), dtype=np.uint8)
+        bright_vis[bright_mask > 0] = (255, 255, 255)
+        bright_color = "green" if chosen == "bright" else "gray"
+        axes[0, 1].imshow(bright_vis)
+        axes[0, 1].set_title(f"Bright Detection\n(NEGATIVE film)", color=bright_color, fontweight="bold" if chosen == "bright" else "normal")
+        axes[0, 1].axis("off")
+
+        # Dark mask visualization
+        dark_vis = np.zeros((*dark_mask.shape, 3), dtype=np.uint8)
+        dark_vis[dark_mask > 0] = (255, 255, 255)
+        dark_color = "green" if chosen == "dark" else "gray"
+        axes[0, 2].imshow(dark_vis)
+        axes[0, 2].set_title(f"Dark Detection\n(POSITIVE/inverted)", color=dark_color, fontweight="bold" if chosen == "dark" else "normal")
+        axes[0, 2].axis("off")
+
+        # Row 2: Quality metrics
+        # Quality thresholds
+        min_coverage = 0.005
+        max_coverage = 0.25
+        min_edge_conc = 0.5
+
+        # Bright quality metrics
+        bright_cov_ok = min_coverage <= bright_coverage <= max_coverage
+        bright_edge_ok = bright_edge_conc >= min_edge_conc
+        bright_valid = bright_cov_ok and bright_edge_ok
+
+        axes[1, 0].axis("off")
+        axes[1, 0].text(0.5, 0.9, "Quality Thresholds", fontsize=14, ha="center", fontweight="bold", transform=axes[1, 0].transAxes)
+        axes[1, 0].text(0.5, 0.7, f"Coverage: {min_coverage:.1%} - {max_coverage:.0%}", fontsize=11, ha="center", transform=axes[1, 0].transAxes)
+        axes[1, 0].text(0.5, 0.5, f"Edge concentration: ≥ {min_edge_conc:.0%}", fontsize=11, ha="center", transform=axes[1, 0].transAxes)
+        axes[1, 0].text(0.5, 0.2, f"Chosen: {chosen.upper()}", fontsize=14, ha="center", fontweight="bold", color="blue", transform=axes[1, 0].transAxes)
+        axes[1, 0].text(0.5, 0.05, reason, fontsize=9, ha="center", transform=axes[1, 0].transAxes, wrap=True)
+
+        # Bright metrics
+        axes[1, 1].axis("off")
+        axes[1, 1].text(0.5, 0.9, "BRIGHT Detection", fontsize=14, ha="center", fontweight="bold", transform=axes[1, 1].transAxes)
+        cov_color = "green" if bright_cov_ok else "red"
+        axes[1, 1].text(0.5, 0.65, f"Coverage: {bright_coverage:.2%}", fontsize=12, ha="center", color=cov_color, transform=axes[1, 1].transAxes)
+        edge_color = "green" if bright_edge_ok else "red"
+        axes[1, 1].text(0.5, 0.45, f"Edge conc: {bright_edge_conc:.2%}", fontsize=12, ha="center", color=edge_color, transform=axes[1, 1].transAxes)
+        valid_text = "✓ VALID" if bright_valid else "✗ INVALID"
+        valid_color = "green" if bright_valid else "red"
+        axes[1, 1].text(0.5, 0.2, valid_text, fontsize=16, ha="center", fontweight="bold", color=valid_color, transform=axes[1, 1].transAxes)
+
+        # Dark metrics
+        dark_cov_ok = min_coverage <= dark_coverage <= max_coverage
+        dark_edge_ok = dark_edge_conc >= min_edge_conc
+        dark_valid = dark_cov_ok and dark_edge_ok
+
+        axes[1, 2].axis("off")
+        axes[1, 2].text(0.5, 0.9, "DARK Detection", fontsize=14, ha="center", fontweight="bold", transform=axes[1, 2].transAxes)
+        cov_color = "green" if dark_cov_ok else "red"
+        axes[1, 2].text(0.5, 0.65, f"Coverage: {dark_coverage:.2%}", fontsize=12, ha="center", color=cov_color, transform=axes[1, 2].transAxes)
+        edge_color = "green" if dark_edge_ok else "red"
+        axes[1, 2].text(0.5, 0.45, f"Edge conc: {dark_edge_conc:.2%}", fontsize=12, ha="center", color=edge_color, transform=axes[1, 2].transAxes)
+        valid_text = "✓ VALID" if dark_valid else "✗ INVALID"
+        valid_color = "green" if dark_valid else "red"
+        axes[1, 2].text(0.5, 0.2, valid_text, fontsize=16, ha="center", fontweight="bold", color=valid_color, transform=axes[1, 2].transAxes)
+
+        fig.tight_layout()
+        self.step += 1
+        fig.savefig(self.output_dir / f"{self.step:02d}_sprocket_detection_comparison.png", dpi=150)
+        plt.close(fig)
+
     def save_sprocket_holes(
         self,
         img: np.ndarray,
