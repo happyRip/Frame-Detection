@@ -122,6 +122,67 @@ class DebugVisualizer:
             plt.close(fig)
             self.step += 1
 
+    def save_sprocket_presence(
+        self,
+        sprocket_mask: np.ndarray,
+        has_sprockets: bool,
+        reason: str,
+        total_bright_ratio: float,
+        edge_bright_ratio: float,
+    ):
+        """Save visualization of sprocket presence detection.
+
+        Args:
+            sprocket_mask: Binary mask of bright areas
+            has_sprockets: Whether sprocket holes were detected
+            reason: Explanation of the detection result
+            total_bright_ratio: Ratio of bright pixels to total pixels
+            edge_bright_ratio: Ratio of edge bright pixels to total bright pixels
+        """
+        import matplotlib.pyplot as plt
+
+        img_h, img_w = sprocket_mask.shape[:2]
+
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        # Show sprocket mask with edge regions highlighted
+        vis = np.zeros((img_h, img_w, 3), dtype=np.uint8)
+        vis[sprocket_mask > 0] = (255, 255, 255)
+
+        # Highlight edge regions
+        edge_fraction = 0.15
+        h_margin = int(img_h * edge_fraction)
+        w_margin = int(img_w * edge_fraction)
+
+        # Draw edge region boundaries
+        cv2.rectangle(vis, (0, 0), (img_w, h_margin), (0, 255, 255), 2)  # Top
+        cv2.rectangle(vis, (0, img_h - h_margin), (img_w, img_h), (0, 255, 255), 2)  # Bottom
+        cv2.rectangle(vis, (0, 0), (w_margin, img_h), (255, 255, 0), 2)  # Left
+        cv2.rectangle(vis, (img_w - w_margin, 0), (img_w, img_h), (255, 255, 0), 2)  # Right
+
+        axes[0].imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+        axes[0].set_title("Bright Areas & Edge Regions")
+        axes[0].axis("off")
+
+        # Show detection result
+        result_color = "green" if has_sprockets else "red"
+        result_text = "SPROCKETS PRESENT" if has_sprockets else "NO SPROCKETS"
+
+        axes[1].text(0.5, 0.7, result_text, fontsize=20, ha="center", va="center",
+                     color=result_color, fontweight="bold", transform=axes[1].transAxes)
+        axes[1].text(0.5, 0.5, reason, fontsize=12, ha="center", va="center",
+                     transform=axes[1].transAxes)
+        axes[1].text(0.5, 0.3, f"Total bright: {total_bright_ratio:.2%}",
+                     fontsize=10, ha="center", va="center", transform=axes[1].transAxes)
+        axes[1].text(0.5, 0.2, f"At edges: {edge_bright_ratio:.2%}",
+                     fontsize=10, ha="center", va="center", transform=axes[1].transAxes)
+        axes[1].axis("off")
+
+        fig.tight_layout()
+        self.step += 1
+        fig.savefig(self.output_dir / f"{self.step:02d}_sprocket_presence.png", dpi=100)
+        plt.close(fig)
+
     def save_sprocket_orientation(
         self,
         sprocket_mask: np.ndarray,

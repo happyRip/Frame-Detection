@@ -83,6 +83,88 @@ def detect_sprocket_holes(
     return sprocket_mask
 
 
+def detect_sprocket_presence(
+    sprocket_mask: np.ndarray,
+    visualizer: DebugVisualizer | None = None,
+) -> bool:
+    """Detect if sprocket holes are present in the image.
+
+    35mm film has sprocket holes on the long edges. Medium format and other
+    films may not have sprocket holes at all. This function checks if the
+    detected bright areas match the pattern of sprocket holes.
+
+    Sprocket holes are present if:
+    1. Significant bright areas are detected
+    2. They are concentrated at edges (can be one or both edges)
+    3. The density exceeds a minimum threshold
+
+    Args:
+        sprocket_mask: Binary mask where bright areas are marked as 255
+        visualizer: Optional debug visualizer
+
+    Returns:
+        True if sprocket holes appear to be present, False otherwise
+    """
+    if sprocket_mask.max() == 0:
+        if visualizer:
+            visualizer.save_sprocket_presence(sprocket_mask, False, "No bright pixels", 0, 0)
+        return False
+
+    img_h, img_w = sprocket_mask.shape[:2]
+    total_pixels = img_h * img_w
+
+    # Check total bright area - sprocket holes should be a small but noticeable fraction
+    total_bright = np.sum(sprocket_mask > 0)
+    total_bright_ratio = total_bright / total_pixels
+
+    # If too little bright area, no sprockets
+    if total_bright_ratio < 0.005:  # Less than 0.5% of image
+        if visualizer:
+            visualizer.save_sprocket_presence(
+                sprocket_mask, False, "Too few bright pixels", total_bright_ratio, 0
+            )
+        return False
+
+    # If too much bright area, it's likely overexposure, not sprockets
+    if total_bright_ratio > 0.25:  # More than 25% of image
+        if visualizer:
+            visualizer.save_sprocket_presence(
+                sprocket_mask, False, "Too many bright pixels (overexposure?)",
+                total_bright_ratio, 0
+            )
+        return False
+
+    # Check if bright areas are concentrated at edges
+    edge_fraction = 0.15
+    h_margin = int(img_h * edge_fraction)
+    w_margin = int(img_w * edge_fraction)
+
+    # Count in edge regions
+    top_bright = np.sum(sprocket_mask[:h_margin, :] > 0)
+    bottom_bright = np.sum(sprocket_mask[img_h - h_margin:, :] > 0)
+    left_bright = np.sum(sprocket_mask[:, :w_margin] > 0)
+    right_bright = np.sum(sprocket_mask[:, img_w - w_margin:] > 0)
+
+    # Total bright pixels at any edge
+    edge_bright = top_bright + bottom_bright + left_bright + right_bright
+    # Account for corner overlap
+    edge_bright_ratio = min(1.0, edge_bright / total_bright) if total_bright > 0 else 0
+
+    # For sprocket holes, most bright pixels should be at edges (at least 50%)
+    has_sprockets = edge_bright_ratio > 0.5
+
+    if visualizer:
+        if has_sprockets:
+            reason = "Sprockets detected at edges"
+        else:
+            reason = "Bright areas not concentrated at edges"
+        visualizer.save_sprocket_presence(
+            sprocket_mask, has_sprockets, reason, total_bright_ratio, edge_bright_ratio
+        )
+
+    return has_sprockets
+
+
 def detect_sprocket_orientation(
     sprocket_mask: np.ndarray,
     visualizer: DebugVisualizer | None = None,
@@ -918,36 +1000,47 @@ def detect_frame_bounds(
 
     # Step 1: Detect sprocket holes to find valid frame region
     sprocket_mask = detect_sprocket_holes(img, visualizer)
-    orientation = detect_sprocket_orientation(sprocket_mask, visualizer)
+    has_sprockets = detect_sprocket_presence(sprocket_mask, visualizer)
 
-    # Detect and filter out film cut ends before sprocket cropping
-    cut_end = detect_film_cut_end(sprocket_mask, orientation, visualizer)
-    sprocket_mask_filtered = filter_cut_end_from_sprocket_mask(
-        sprocket_mask, orientation, cut_end
-    )
+    if has_sprockets:
+        orientation = detect_sprocket_orientation(sprocket_mask, visualizer)
 
-    _, y_offset_top, y_offset_bottom, x_offset_left, x_offset_right = (
-        crop_sprocket_region(img, sprocket_mask_filtered, orientation, visualizer)
-    )
+        # Detect and filter out film cut ends before sprocket cropping
+        cut_end = detect_film_cut_end(sprocket_mask, orientation, visualizer)
+        sprocket_mask_filtered = filter_cut_end_from_sprocket_mask(
+            sprocket_mask, orientation, cut_end
+        )
 
-    # Define valid frame region based on orientation
-    y_min = y_offset_top
-    y_max = img_h - y_offset_bottom
-    x_min = x_offset_left
-    x_max = img_w - x_offset_right
+        _, y_offset_top, y_offset_bottom, x_offset_left, x_offset_right = (
+            crop_sprocket_region(img, sprocket_mask_filtered, orientation, visualizer)
+        )
 
-    if orientation == Orientation.HORIZONTAL:
-        if y_min >= y_max:
-            raise ValueError(
-                f"Invalid frame region detected: y_min={y_min} >= y_max={y_max}. "
-                "Sprocket detection may have failed for this image."
-            )
+        # Define valid frame region based on orientation
+        y_min = y_offset_top
+        y_max = img_h - y_offset_bottom
+        x_min = x_offset_left
+        x_max = img_w - x_offset_right
+
+        if orientation == Orientation.HORIZONTAL:
+            if y_min >= y_max:
+                raise ValueError(
+                    f"Invalid frame region detected: y_min={y_min} >= y_max={y_max}. "
+                    "Sprocket detection may have failed for this image."
+                )
+        else:
+            if x_min >= x_max:
+                raise ValueError(
+                    f"Invalid frame region detected: x_min={x_min} >= x_max={x_max}. "
+                    "Sprocket detection may have failed for this image."
+                )
     else:
-        if x_min >= x_max:
-            raise ValueError(
-                f"Invalid frame region detected: x_min={x_min} >= x_max={x_max}. "
-                "Sprocket detection may have failed for this image."
-            )
+        # No sprocket holes detected (e.g., medium format film)
+        # Use full image as valid region
+        orientation = Orientation.HORIZONTAL  # Default orientation
+        y_min = 0
+        y_max = img_h
+        x_min = 0
+        x_max = img_w
 
     # Step 2: Normalize levels for better color detection
     img = normalize_levels(img, visualizer)
