@@ -37,12 +37,15 @@ configureLogging(true, _PLUGIN.path)
 local venvPath = LrPathUtils.child(_PLUGIN.path, "venv")
 local pythonPath = LrPathUtils.child(LrPathUtils.child(venvPath, "bin"), "python")
 
+-- Path to frame_detection package
+local frameDetectionPath = LrPathUtils.child(_PLUGIN.path, "frame_detection")
+
 -- Template string to run Python scripts
--- Uses `python -m frame_detection` to run the package
-local pythonCommand = '"' .. pythonPath .. '" -m frame_detection __ARGS__'
+-- Run the frame_detection package directly (invokes __main__.py)
+local pythonCommand = '"' .. pythonPath .. '" "' .. frameDetectionPath .. '" __ARGS__'
 if WIN_ENV then
 	-- Run Python through the Linux sub-system on Windows
-	pythonCommand = "bash -c 'DISPLAY=:0 python -m frame_detection __ARGS__'"
+	pythonCommand = "bash -c 'DISPLAY=:0 python \"" .. frameDetectionPath .. "\" __ARGS__'"
 end
 
 -- Create directory to save temporary exports to
@@ -163,6 +166,7 @@ end
 function processPhotos(photos, settings)
 	settings = settings or {}
 	local aspectRatio = settings.aspectRatio or "3:2"
+	local filmType = settings.filmType or "auto"
 	local cropIn = settings.cropIn or 1.5
 	local sprocketMargin = settings.sprocketMargin or 0.1
 	local filmBaseInset = settings.filmBaseInset or 1.5
@@ -258,6 +262,8 @@ function processPhotos(photos, settings)
 				.. '"'
 				.. " --ratio "
 				.. aspectRatio
+				.. " --film-type "
+				.. filmType
 				.. " --crop-in "
 				.. cropIn
 				.. " --sprocket-margin "
