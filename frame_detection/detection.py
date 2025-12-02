@@ -415,17 +415,110 @@ def filter_cut_end_from_sprocket_mask(
     return filtered_mask
 
 
+def _fit_sprocket_boundary(
+    sprocket_mask: np.ndarray,
+    axis: int,
+    half: str,
+    poly_degree: int = 2,
+) -> np.ndarray | None:
+    """Fit a polynomial curve to the sprocket boundary.
+
+    For each position along the axis, finds the innermost sprocket pixel
+    and fits a polynomial to these boundary points.
+
+    Args:
+        sprocket_mask: Binary mask where sprocket holes are 255
+        axis: 0 for horizontal boundary (top/bottom), 1 for vertical (left/right)
+        half: "top", "bottom", "left", or "right" - which half to analyze
+        poly_degree: Degree of polynomial to fit (default 2 for quadratic)
+
+    Returns:
+        Array of fitted boundary positions for each position along the edge,
+        or None if no sprockets found in this half.
+    """
+    img_h, img_w = sprocket_mask.shape[:2]
+
+    if axis == 0:  # Horizontal boundary (top/bottom sprockets)
+        mid = img_h // 2
+        positions = []
+        x_coords = []
+
+        for x in range(img_w):
+            col = sprocket_mask[:, x]
+            sprocket_rows = np.where(col > 0)[0]
+
+            if half == "top":
+                top_sprockets = sprocket_rows[sprocket_rows < mid]
+                if len(top_sprockets) > 0:
+                    # Innermost = maximum y for top sprockets
+                    positions.append(np.max(top_sprockets))
+                    x_coords.append(x)
+            else:  # bottom
+                bottom_sprockets = sprocket_rows[sprocket_rows >= mid]
+                if len(bottom_sprockets) > 0:
+                    # Innermost = minimum y for bottom sprockets
+                    positions.append(np.min(bottom_sprockets))
+                    x_coords.append(x)
+
+        if len(positions) < poly_degree + 1:
+            return None
+
+        # Fit polynomial
+        x_coords = np.array(x_coords)
+        positions = np.array(positions)
+        coeffs = np.polyfit(x_coords, positions, poly_degree)
+        fitted = np.polyval(coeffs, np.arange(img_w))
+
+        return fitted
+
+    else:  # Vertical boundary (left/right sprockets)
+        mid = img_w // 2
+        positions = []
+        y_coords = []
+
+        for y in range(img_h):
+            row = sprocket_mask[y, :]
+            sprocket_cols = np.where(row > 0)[0]
+
+            if half == "left":
+                left_sprockets = sprocket_cols[sprocket_cols < mid]
+                if len(left_sprockets) > 0:
+                    # Innermost = maximum x for left sprockets
+                    positions.append(np.max(left_sprockets))
+                    y_coords.append(y)
+            else:  # right
+                right_sprockets = sprocket_cols[sprocket_cols >= mid]
+                if len(right_sprockets) > 0:
+                    # Innermost = minimum x for right sprockets
+                    positions.append(np.min(right_sprockets))
+                    y_coords.append(y)
+
+        if len(positions) < poly_degree + 1:
+            return None
+
+        # Fit polynomial
+        y_coords = np.array(y_coords)
+        positions = np.array(positions)
+        coeffs = np.polyfit(y_coords, positions, poly_degree)
+        fitted = np.polyval(coeffs, np.arange(img_h))
+
+        return fitted
+
+
 def crop_sprocket_region(
     img: np.ndarray,
     sprocket_mask: np.ndarray,
     orientation: Orientation = Orientation.HORIZONTAL,
     margin_percent: float = 0.0,
     visualizer: DebugVisualizer | None = None,
-) -> tuple[np.ndarray, int, int, int, int]:
+) -> tuple[np.ndarray, int, int, int, int, np.ndarray | None, np.ndarray | None]:
     """Crop out the region containing sprocket holes.
 
     Sprocket holes on 35mm film run along both long edges. Depending on
     orientation, this crops from top/bottom (horizontal) or left/right (vertical).
+
+    Uses polynomial curve fitting to account for misaligned sprocket holes,
+    then crops at the most conservative (innermost) point of the fitted curve.
 
     Args:
         img: Input image as numpy array
@@ -436,41 +529,36 @@ def crop_sprocket_region(
         visualizer: Optional debug visualizer to save intermediate images
 
     Returns:
-        Tuple of (cropped_image, y_offset_top, y_offset_bottom, x_offset_left, x_offset_right)
-        where offsets indicate pixels cropped from each edge.
+        Tuple of (cropped_image, y_offset_top, y_offset_bottom, x_offset_left, x_offset_right,
+        curve1, curve2) where offsets indicate pixels cropped from each edge and curves
+        are the fitted polynomial boundaries.
     """
     if sprocket_mask.max() == 0:
         if visualizer:
             visualizer.save_sprocket_crop(img, img, 0, 0, orientation)
-        return img, 0, 0, 0, 0
+        return img, 0, 0, 0, 0, None, None
 
     img_h, img_w = img.shape[:2]
 
     if orientation == Orientation.HORIZONTAL:
         # Sprockets on top/bottom - crop rows
         mid_y = img_h // 2
-        rows_with_sprockets = np.any(sprocket_mask > 0, axis=1)
-
-        if not np.any(rows_with_sprockets):
-            if visualizer:
-                visualizer.save_sprocket_crop(img, img, 0, 0, orientation)
-            return img, 0, 0, 0, 0
-
-        sprocket_rows = np.where(rows_with_sprockets)[0]
         margin = int(img_h * margin_percent / 100)
 
-        # Top crop: find lowest sprocket row in top half
-        top_sprockets = sprocket_rows[sprocket_rows < mid_y]
-        if len(top_sprockets) > 0:
-            crop_top = np.max(top_sprockets) + 1 + margin
+        # Fit curves to top and bottom boundaries
+        top_curve = _fit_sprocket_boundary(sprocket_mask, axis=0, half="top")
+        bottom_curve = _fit_sprocket_boundary(sprocket_mask, axis=0, half="bottom")
+
+        # Top crop: use maximum of fitted curve (most conservative)
+        if top_curve is not None:
+            crop_top = int(np.max(top_curve)) + 1 + margin
             crop_top = min(crop_top, mid_y)
         else:
             crop_top = 0
 
-        # Bottom crop: find highest sprocket row in bottom half
-        bottom_sprockets = sprocket_rows[sprocket_rows >= mid_y]
-        if len(bottom_sprockets) > 0:
-            crop_bottom = np.min(bottom_sprockets) - margin
+        # Bottom crop: use minimum of fitted curve (most conservative)
+        if bottom_curve is not None:
+            crop_bottom = int(np.min(bottom_curve)) - margin
             crop_bottom = max(crop_bottom, mid_y)
         else:
             crop_bottom = img_h
@@ -479,36 +567,31 @@ def crop_sprocket_region(
 
         if visualizer:
             visualizer.save_sprocket_crop(
-                img, img_cropped, crop_top, img_h - crop_bottom, orientation
+                img, img_cropped, crop_top, img_h - crop_bottom, orientation,
+                top_curve, bottom_curve
             )
 
-        return img_cropped, crop_top, img_h - crop_bottom, 0, 0
+        return img_cropped, crop_top, img_h - crop_bottom, 0, 0, top_curve, bottom_curve
 
     else:
         # Sprockets on left/right - crop columns
         mid_x = img_w // 2
-        cols_with_sprockets = np.any(sprocket_mask > 0, axis=0)
-
-        if not np.any(cols_with_sprockets):
-            if visualizer:
-                visualizer.save_sprocket_crop(img, img, 0, 0, orientation)
-            return img, 0, 0, 0, 0
-
-        sprocket_cols = np.where(cols_with_sprockets)[0]
         margin = int(img_w * margin_percent / 100)
 
-        # Left crop: find rightmost sprocket column in left half
-        left_sprockets = sprocket_cols[sprocket_cols < mid_x]
-        if len(left_sprockets) > 0:
-            crop_left = np.max(left_sprockets) + 1 + margin
+        # Fit curves to left and right boundaries
+        left_curve = _fit_sprocket_boundary(sprocket_mask, axis=1, half="left")
+        right_curve = _fit_sprocket_boundary(sprocket_mask, axis=1, half="right")
+
+        # Left crop: use maximum of fitted curve (most conservative)
+        if left_curve is not None:
+            crop_left = int(np.max(left_curve)) + 1 + margin
             crop_left = min(crop_left, mid_x)
         else:
             crop_left = 0
 
-        # Right crop: find leftmost sprocket column in right half
-        right_sprockets = sprocket_cols[sprocket_cols >= mid_x]
-        if len(right_sprockets) > 0:
-            crop_right = np.min(right_sprockets) - margin
+        # Right crop: use minimum of fitted curve (most conservative)
+        if right_curve is not None:
+            crop_right = int(np.min(right_curve)) - margin
             crop_right = max(crop_right, mid_x)
         else:
             crop_right = img_w
@@ -517,66 +600,108 @@ def crop_sprocket_region(
 
         if visualizer:
             visualizer.save_sprocket_crop(
-                img, img_cropped, crop_left, img_w - crop_right, orientation
+                img, img_cropped, crop_left, img_w - crop_right, orientation,
+                left_curve, right_curve
             )
 
-        return img_cropped, 0, 0, crop_left, img_w - crop_right
+        return img_cropped, 0, 0, crop_left, img_w - crop_right, left_curve, right_curve
+
+
+def mask_sprocket_region(
+    mask: np.ndarray,
+    orientation: Orientation,
+    curve1: np.ndarray | None,
+    curve2: np.ndarray | None,
+) -> np.ndarray:
+    """Zero out sprocket regions in a mask using fitted curves.
+
+    Args:
+        mask: Binary mask to modify
+        orientation: Film orientation
+        curve1: Fitted curve for top (horizontal) or left (vertical) boundary
+        curve2: Fitted curve for bottom (horizontal) or right (vertical) boundary
+
+    Returns:
+        Mask with sprocket regions zeroed out
+    """
+    result = mask.copy()
+    img_h, img_w = mask.shape[:2]
+
+    if orientation == Orientation.HORIZONTAL:
+        for x in range(img_w):
+            if curve1 is not None and x < len(curve1):
+                y_top = max(0, int(curve1[x]))
+                result[:y_top, x] = 0
+            if curve2 is not None and x < len(curve2):
+                y_bottom = min(img_h, int(curve2[x]))
+                result[y_bottom:, x] = 0
+    else:
+        for y in range(img_h):
+            if curve1 is not None and y < len(curve1):
+                x_left = max(0, int(curve1[y]))
+                result[y, :x_left] = 0
+            if curve2 is not None and y < len(curve2):
+                x_right = min(img_w, int(curve2[y]))
+                result[y, x_right:] = 0
+
+    return result
 
 
 def detect_film_base_color(
     img: np.ndarray,
     sprocket_mask: np.ndarray,
-    y_min: int,
-    y_max: int,
-    x_min: int = 0,
-    x_max: int | None = None,
     orientation: Orientation = Orientation.HORIZONTAL,
+    curve1: np.ndarray | None = None,
+    curve2: np.ndarray | None = None,
     visualizer: DebugVisualizer | None = None,
 ) -> np.ndarray:
     """Detect film base color from unexposed regions.
 
-    Samples from sprocket regions (excluding holes) if detected,
+    Samples from sprocket regions (excluding holes) using fitted curves,
     otherwise falls back to image edges.
 
     Args:
         img: Input image (normalized)
         sprocket_mask: Binary mask of sprocket holes (255=hole)
-        y_min: Top boundary of valid frame region (below top sprockets)
-        y_max: Bottom boundary of valid frame region (above bottom sprockets)
-        x_min: Left boundary of valid frame region (after left sprockets)
-        x_max: Right boundary of valid frame region (before right sprockets)
         orientation: "horizontal" for top/bottom sprockets, "vertical" for left/right
+        curve1: Fitted curve for top (horizontal) or left (vertical) boundary
+        curve2: Fitted curve for bottom (horizontal) or right (vertical) boundary
         visualizer: Optional debug visualizer
 
     Returns:
         Film base color as BGR numpy array of shape (3,)
     """
     img_h, img_w = img.shape[:2]
-    if x_max is None:
-        x_max = img_w
 
     sample_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    has_sprocket_regions = curve1 is not None or curve2 is not None
 
-    if orientation == Orientation.HORIZONTAL:
-        has_sprocket_regions = y_min > 0 or y_max < img_h
-        if has_sprocket_regions:
-            # Sample from top/bottom sprocket regions, excluding the holes
-            if y_min > 0:
-                sample_mask[:y_min, :] = 255
-            if y_max < img_h:
-                sample_mask[y_max:, :] = 255
-            # Exclude sprocket holes
-            sample_mask[sprocket_mask > 0] = 0
-    else:
-        has_sprocket_regions = x_min > 0 or x_max < img_w
-        if has_sprocket_regions:
-            # Sample from left/right sprocket regions, excluding the holes
-            if x_min > 0:
-                sample_mask[:, :x_min] = 255
-            if x_max < img_w:
-                sample_mask[:, x_max:] = 255
-            # Exclude sprocket holes
-            sample_mask[sprocket_mask > 0] = 0
+    if has_sprocket_regions:
+        if orientation == Orientation.HORIZONTAL:
+            # Sample from regions above curve1 (top) and below curve2 (bottom)
+            for x in range(img_w):
+                if curve1 is not None:
+                    y_top = int(curve1[x])
+                    if y_top > 0:
+                        sample_mask[:y_top, x] = 255
+                if curve2 is not None:
+                    y_bottom = int(curve2[x])
+                    if y_bottom < img_h:
+                        sample_mask[y_bottom:, x] = 255
+        else:
+            # Sample from regions left of curve1 and right of curve2
+            for y in range(img_h):
+                if curve1 is not None:
+                    x_left = int(curve1[y])
+                    if x_left > 0:
+                        sample_mask[y, :x_left] = 255
+                if curve2 is not None:
+                    x_right = int(curve2[y])
+                    if x_right < img_w:
+                        sample_mask[y, x_right:] = 255
+
+        # Exclude sprocket holes
+        sample_mask[sprocket_mask > 0] = 0
 
     # Fallback: if no sprocket regions or insufficient samples, use image edges
     min_samples = 100
@@ -639,6 +764,9 @@ def detect_lines(
     img: np.ndarray,
     film_base_mask: np.ndarray,
     edge_margins: Margins,
+    orientation: Orientation = Orientation.HORIZONTAL,
+    curve1: np.ndarray | None = None,
+    curve2: np.ndarray | None = None,
     visualizer: DebugVisualizer | None = None,
 ) -> list[Line]:
     """Detect lines from film base mask boundaries using Hough transform.
@@ -650,6 +778,9 @@ def detect_lines(
         img: Input image (for visualization only)
         film_base_mask: Binary mask where film base regions are 255
         edge_margins: Margins defining the regions to search for each edge
+        orientation: Film orientation for curve masking
+        curve1: Fitted curve for top (horizontal) or left (vertical) boundary
+        curve2: Fitted curve for bottom (horizontal) or right (vertical) boundary
         visualizer: Optional debug visualizer
 
     Returns:
@@ -659,6 +790,10 @@ def detect_lines(
 
     # Find edges of the film base mask (boundaries between frame and base)
     edges = cv2.Canny(film_base_mask, 50, 150)
+
+    # Mask out sprocket regions from edges using curves
+    if curve1 is not None or curve2 is not None:
+        edges = mask_sprocket_region(edges, orientation, curve1, curve2)
 
     if visualizer:
         visualizer.save_edges(edges)
@@ -1000,10 +1135,16 @@ def detect_frame_bounds(
             sprocket_mask, orientation, cut_end
         )
 
-        _, y_offset_top, y_offset_bottom, x_offset_left, x_offset_right = (
-            crop_sprocket_region(
-                img, sprocket_mask_filtered, orientation, sprocket_margin_percent, visualizer
-            )
+        (
+            _,
+            y_offset_top,
+            y_offset_bottom,
+            x_offset_left,
+            x_offset_right,
+            sprocket_curve1,
+            sprocket_curve2,
+        ) = crop_sprocket_region(
+            img, sprocket_mask_filtered, orientation, sprocket_margin_percent, visualizer
         )
 
         # Define valid frame region based on orientation
@@ -1032,6 +1173,8 @@ def detect_frame_bounds(
         y_max = img_h
         x_min = 0
         x_max = img_w
+        sprocket_curve1 = None
+        sprocket_curve2 = None
 
     # Apply ignore margins after sprocket detection
     ignore_top = int(orig_h * ignore_margins.top)
@@ -1055,6 +1198,18 @@ def detect_frame_bounds(
         x_min = max(0, x_min - ignore_left)
         x_max = min(img_w, x_max - ignore_left)
 
+        # Adjust sprocket curves to account for ignore margins
+        if orientation == Orientation.HORIZONTAL:
+            if sprocket_curve1 is not None:
+                sprocket_curve1 = sprocket_curve1[ignore_left:orig_w - ignore_right] - ignore_top
+            if sprocket_curve2 is not None:
+                sprocket_curve2 = sprocket_curve2[ignore_left:orig_w - ignore_right] - ignore_top
+        else:
+            if sprocket_curve1 is not None:
+                sprocket_curve1 = sprocket_curve1[ignore_top:orig_h - ignore_bottom] - ignore_left
+            if sprocket_curve2 is not None:
+                sprocket_curve2 = sprocket_curve2[ignore_top:orig_h - ignore_bottom] - ignore_left
+
         # Also crop the sprocket mask for film base detection
         sprocket_mask = sprocket_mask[
             ignore_top : orig_h - ignore_bottom,
@@ -1066,33 +1221,28 @@ def detect_frame_bounds(
 
     # Step 3: Detect film base color from normalized image
     film_base_color = detect_film_base_color(
-        img, sprocket_mask, y_min, y_max, x_min, x_max, orientation, visualizer
+        img, sprocket_mask, orientation, sprocket_curve1, sprocket_curve2, visualizer
     )
 
     # Step 4: Create mask of film base regions
     film_base_mask = create_film_base_mask(img, film_base_color, visualizer=visualizer)
 
-    # Crop mask to valid frame region to avoid detecting sprocket boundaries as edges
-    if orientation == Orientation.HORIZONTAL:
-        film_base_mask_cropped = film_base_mask[y_min:y_max, :]
-        img_cropped = img[y_min:y_max, :]
-    else:
-        film_base_mask_cropped = film_base_mask[:, x_min:x_max]
-        img_cropped = img[:, x_min:x_max]
-
     if visualizer:
+        # Show film base mask with sprocket regions indicated
+        film_base_mask_display = mask_sprocket_region(
+            film_base_mask, orientation, sprocket_curve1, sprocket_curve2
+        )
         visualizer.save_film_base_mask_cropped(
-            img, film_base_mask_cropped, y_min, y_max, x_min, x_max, orientation
+            img, film_base_mask_display, y_min, y_max, x_min, x_max, orientation,
+            sprocket_curve1, sprocket_curve2
         )
 
     # Step 5: Detect lines from film base mask boundaries (in each margin region)
-    lines = detect_lines(img_cropped, film_base_mask_cropped, edge_margins, visualizer)
-
-    # Offset line coordinates back to original image space
-    if orientation == "horizontal" and y_min > 0:
-        lines = [line.offset_y(y_min) for line in lines]
-    elif orientation == Orientation.VERTICAL and x_min > 0:
-        lines = [line.offset_x(x_min) for line in lines]
+    # Pass original mask - edges will be masked using curves inside detect_lines
+    lines = detect_lines(
+        img, film_base_mask, edge_margins, orientation,
+        sprocket_curve1, sprocket_curve2, visualizer
+    )
 
     if visualizer:
         visualizer.save_lines(img, lines)

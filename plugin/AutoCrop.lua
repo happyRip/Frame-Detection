@@ -164,6 +164,7 @@ function processPhotos(photos, settings)
 	settings = settings or {}
 	local aspectRatio = settings.aspectRatio or "3:2"
 	local cropIn = settings.cropIn or 1.5
+	local sprocketMargin = settings.sprocketMargin or 0.1
 	local edgeMargin = settings.edgeMargin or "5"
 	local ignoreMargin = settings.ignoreMargin or "0,1"
 	local resetCrop = settings.resetCrop or false
@@ -258,6 +259,8 @@ function processPhotos(photos, settings)
 				.. aspectRatio
 				.. " --crop-in "
 				.. cropIn
+				.. " --sprocket-margin "
+				.. sprocketMargin
 				.. " --edge-margin "
 				.. edgeMargin
 				.. " --ignore-margin "

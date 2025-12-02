@@ -82,6 +82,12 @@ def parse_args():
         help="Percentage to crop inward from detected edges (0-100)",
     )
     parser.add_argument(
+        "--sprocket-margin",
+        type=float,
+        default=0.1,
+        help="Percentage to crop beyond detected sprocket holes (0-100)",
+    )
+    parser.add_argument(
         "--edge-margin",
         default="5",
         help="Percentage of edge margin for line detection: single value (5), "
@@ -129,6 +135,7 @@ def main():
             aspect_ratio,
             visualizer=visualizer,
             crop_in_percent=args.crop_in,
+            sprocket_margin_percent=args.sprocket_margin,
             edge_margins=edge_margins,
             ignore_margins=ignore_margins,
         )

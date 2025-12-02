@@ -12,6 +12,7 @@ local DEFAULTS = {
 	aspectRatio = "2:3",
 	customAspectRatio = "2:3",
 	cropIn = 1.5,
+	sprocketMargin = 0.1,
 	edgeMargin = "5",
 	ignoreMargin = "0,1",
 	resetCrop = false,

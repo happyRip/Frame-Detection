@@ -359,6 +359,8 @@ class DebugVisualizer:
         offset1: int,
         offset2: int,
         orientation: Orientation = Orientation.HORIZONTAL,
+        curve1: np.ndarray | None = None,
+        curve2: np.ndarray | None = None,
     ):
         """Save visualization of sprocket region cropping.
 
@@ -368,6 +370,8 @@ class DebugVisualizer:
             offset1: Pixels cropped from top (horizontal) or left (vertical)
             offset2: Pixels cropped from bottom (horizontal) or right (vertical)
             orientation: "horizontal" for top/bottom, "vertical" for left/right
+            curve1: Fitted curve for top (horizontal) or left (vertical) boundary
+            curve2: Fitted curve for bottom (horizontal) or right (vertical) boundary
         """
         vis = img.copy()
         img_h, img_w = img.shape[:2]
@@ -385,6 +389,14 @@ class DebugVisualizer:
                     crop_bottom = img_h - offset2
                     overlay[crop_bottom:, :] = (0, 0, 128)  # Dark red overlay
                     cv2.line(vis, (0, crop_bottom), (img_w, crop_bottom), (0, 255, 255), 3)
+
+                # Draw fitted curves
+                if curve1 is not None:
+                    pts = np.array([(x, int(curve1[x])) for x in range(len(curve1))], dtype=np.int32)
+                    cv2.polylines(vis, [pts], False, (0, 255, 0), 2)
+                if curve2 is not None:
+                    pts = np.array([(x, int(curve2[x])) for x in range(len(curve2))], dtype=np.int32)
+                    cv2.polylines(vis, [pts], False, (0, 255, 0), 2)
             else:
                 # Shade cropped left region
                 if offset1 > 0:
@@ -395,6 +407,14 @@ class DebugVisualizer:
                     crop_right = img_w - offset2
                     overlay[:, crop_right:] = (0, 0, 128)  # Dark red overlay
                     cv2.line(vis, (crop_right, 0), (crop_right, img_h), (0, 255, 255), 3)
+
+                # Draw fitted curves
+                if curve1 is not None:
+                    pts = np.array([(int(curve1[y]), y) for y in range(len(curve1))], dtype=np.int32)
+                    cv2.polylines(vis, [pts], False, (0, 255, 0), 2)
+                if curve2 is not None:
+                    pts = np.array([(int(curve2[y]), y) for y in range(len(curve2))], dtype=np.int32)
+                    cv2.polylines(vis, [pts], False, (0, 255, 0), 2)
 
             cv2.addWeighted(overlay, 0.5, vis, 0.5, 0, vis)
             orient_label = "TOP/BOTTOM" if orientation == Orientation.HORIZONTAL else "LEFT/RIGHT"
@@ -535,67 +555,85 @@ class DebugVisualizer:
     def save_film_base_mask_cropped(
         self,
         img: np.ndarray,
-        film_base_mask_cropped: np.ndarray,
+        film_base_mask_masked: np.ndarray,
         y_min: int,
         y_max: int,
         x_min: int = 0,
         x_max: int | None = None,
         orientation: Orientation = Orientation.HORIZONTAL,
+        curve1: np.ndarray | None = None,
+        curve2: np.ndarray | None = None,
     ):
         """Save visualization of film base mask with sprocket areas excluded.
 
         Args:
             img: Original full image
-            film_base_mask_cropped: Binary mask cropped to valid region only
-            y_min: Top boundary of valid frame region
-            y_max: Bottom boundary of valid frame region
-            x_min: Left boundary of valid frame region
-            x_max: Right boundary of valid frame region
+            film_base_mask_masked: Binary mask with sprocket regions zeroed out
+            y_min: Top boundary of valid frame region (fallback)
+            y_max: Bottom boundary of valid frame region (fallback)
+            x_min: Left boundary of valid frame region (fallback)
+            x_max: Right boundary of valid frame region (fallback)
             orientation: Sprocket orientation
+            curve1: Fitted curve for top (horizontal) or left (vertical) boundary
+            curve2: Fitted curve for bottom (horizontal) or right (vertical) boundary
         """
         vis = img.copy()
         img_h, img_w = img.shape[:2]
         if x_max is None:
             x_max = img_w
 
+        # Shade excluded sprocket regions using curves
         if orientation == Orientation.HORIZONTAL:
-            # Shade excluded top/bottom sprocket regions in dark red
-            if y_min > 0:
-                vis[:y_min, :] = (vis[:y_min, :] * 0.3 + np.array([0, 0, 100])).astype(
-                    np.uint8
-                )
-            if y_max < img_h:
-                vis[y_max:, :] = (vis[y_max:, :] * 0.3 + np.array([0, 0, 100])).astype(
-                    np.uint8
-                )
+            for x in range(img_w):
+                if curve1 is not None and x < len(curve1):
+                    y_top = max(0, int(curve1[x]))
+                    if y_top > 0:
+                        vis[:y_top, x] = (vis[:y_top, x] * 0.3 + np.array([0, 0, 100])).astype(np.uint8)
+                elif y_min > 0:
+                    vis[:y_min, x] = (vis[:y_min, x] * 0.3 + np.array([0, 0, 100])).astype(np.uint8)
 
-            # Overlay film base mask in magenta (in valid region)
-            overlay = vis.copy()
-            overlay[y_min:y_max, :][film_base_mask_cropped > 0] = (255, 0, 255)
-            cv2.addWeighted(overlay, 0.4, vis, 0.6, 0, vis)
-
-            # Draw boundary lines for valid region
-            cv2.line(vis, (0, y_min), (img_w, y_min), (0, 255, 255), 2)
-            cv2.line(vis, (0, y_max), (img_w, y_max), (0, 255, 255), 2)
+                if curve2 is not None and x < len(curve2):
+                    y_bottom = min(img_h, int(curve2[x]))
+                    if y_bottom < img_h:
+                        vis[y_bottom:, x] = (vis[y_bottom:, x] * 0.3 + np.array([0, 0, 100])).astype(np.uint8)
+                elif y_max < img_h:
+                    vis[y_max:, x] = (vis[y_max:, x] * 0.3 + np.array([0, 0, 100])).astype(np.uint8)
         else:
-            # Shade excluded left/right sprocket regions in dark red
-            if x_min > 0:
-                vis[:, :x_min] = (vis[:, :x_min] * 0.3 + np.array([0, 0, 100])).astype(
-                    np.uint8
-                )
-            if x_max < img_w:
-                vis[:, x_max:] = (vis[:, x_max:] * 0.3 + np.array([0, 0, 100])).astype(
-                    np.uint8
-                )
+            for y in range(img_h):
+                if curve1 is not None and y < len(curve1):
+                    x_left = max(0, int(curve1[y]))
+                    if x_left > 0:
+                        vis[y, :x_left] = (vis[y, :x_left] * 0.3 + np.array([0, 0, 100])).astype(np.uint8)
+                elif x_min > 0:
+                    vis[y, :x_min] = (vis[y, :x_min] * 0.3 + np.array([0, 0, 100])).astype(np.uint8)
 
-            # Overlay film base mask in magenta (in valid region)
-            overlay = vis.copy()
-            overlay[:, x_min:x_max][film_base_mask_cropped > 0] = (255, 0, 255)
-            cv2.addWeighted(overlay, 0.4, vis, 0.6, 0, vis)
+                if curve2 is not None and y < len(curve2):
+                    x_right = min(img_w, int(curve2[y]))
+                    if x_right < img_w:
+                        vis[y, x_right:] = (vis[y, x_right:] * 0.3 + np.array([0, 0, 100])).astype(np.uint8)
+                elif x_max < img_w:
+                    vis[y, x_max:] = (vis[y, x_max:] * 0.3 + np.array([0, 0, 100])).astype(np.uint8)
 
-            # Draw boundary lines for valid region
-            cv2.line(vis, (x_min, 0), (x_min, img_h), (0, 255, 255), 2)
-            cv2.line(vis, (x_max, 0), (x_max, img_h), (0, 255, 255), 2)
+        # Overlay film base mask in magenta
+        overlay = vis.copy()
+        overlay[film_base_mask_masked > 0] = (255, 0, 255)
+        cv2.addWeighted(overlay, 0.4, vis, 0.6, 0, vis)
+
+        # Draw boundary curves
+        if orientation == Orientation.HORIZONTAL:
+            if curve1 is not None:
+                pts = np.array([(x, int(curve1[x])) for x in range(len(curve1))], dtype=np.int32)
+                cv2.polylines(vis, [pts], False, (0, 255, 255), 2)
+            if curve2 is not None:
+                pts = np.array([(x, int(curve2[x])) for x in range(len(curve2))], dtype=np.int32)
+                cv2.polylines(vis, [pts], False, (0, 255, 255), 2)
+        else:
+            if curve1 is not None:
+                pts = np.array([(int(curve1[y]), y) for y in range(len(curve1))], dtype=np.int32)
+                cv2.polylines(vis, [pts], False, (0, 255, 255), 2)
+            if curve2 is not None:
+                pts = np.array([(int(curve2[y]), y) for y in range(len(curve2))], dtype=np.int32)
+                cv2.polylines(vis, [pts], False, (0, 255, 255), 2)
 
         cv2.putText(
             vis,

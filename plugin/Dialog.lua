@@ -75,6 +75,20 @@ local function buildCropSettingsTab(f, props, restoreDefaults)
 			}),
 
 			f:row({
+				f:static_text({ title = "Sprocket Margin:", width = 100 }),
+				f:edit_field({
+					value = LrView.bind("sprocketMargin"),
+					width_in_digits = 4,
+					precision = 2,
+					min = 0,
+					max = 10,
+					alignment = "right",
+					tooltip = "Percentage to crop beyond detected sprocket holes (0-10).",
+				}),
+				f:static_text({ title = "%" }),
+			}),
+
+			f:row({
 				f:static_text({ title = "Edge Margin:", width = 100 }),
 				f:edit_field({
 					value = LrView.bind("edgeMargin"),
