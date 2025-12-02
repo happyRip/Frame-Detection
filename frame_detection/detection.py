@@ -653,12 +653,15 @@ def detect_film_base_color(
     orientation: Orientation = Orientation.HORIZONTAL,
     curve1: np.ndarray | None = None,
     curve2: np.ndarray | None = None,
+    aspect_ratio: float | None = None,
+    inset_percent: float = 1.0,
     visualizer: DebugVisualizer | None = None,
 ) -> np.ndarray:
     """Detect film base color from unexposed regions.
 
-    Samples from sprocket regions (excluding holes) using fitted curves,
-    otherwise falls back to image edges.
+    When sprocket curves are available, samples from sprocket regions
+    (excluding holes). Otherwise, samples from outside a centered rectangle
+    with the specified aspect ratio, inset by a percentage of the diagonal.
 
     Args:
         img: Input image (normalized)
@@ -666,6 +669,8 @@ def detect_film_base_color(
         orientation: "horizontal" for top/bottom sprockets, "vertical" for left/right
         curve1: Fitted curve for top (horizontal) or left (vertical) boundary
         curve2: Fitted curve for bottom (horizontal) or right (vertical) boundary
+        aspect_ratio: Aspect ratio (width/height) for inner rectangle (no sprockets)
+        inset_percent: Diagonal inset percentage for inner rectangle (0-50)
         visualizer: Optional debug visualizer
 
     Returns:
@@ -675,6 +680,7 @@ def detect_film_base_color(
 
     sample_mask = np.zeros((img_h, img_w), dtype=np.uint8)
     has_sprocket_regions = curve1 is not None or curve2 is not None
+    inner_rect = None
 
     if has_sprocket_regions:
         if orientation == Orientation.HORIZONTAL:
@@ -703,10 +709,45 @@ def detect_film_base_color(
         # Exclude sprocket holes
         sample_mask[sprocket_mask > 0] = 0
 
-    # Fallback: if no sprocket regions or insufficient samples, use image edges
+    else:
+        # No sprocket regions - use aspect ratio based sampling
+        if aspect_ratio is not None:
+            # The inner rectangle has the film aspect ratio.
+            # The tight axis (less room) uses inset_percent as margin.
+            # The loose axis margin is calculated to maintain the aspect ratio.
+            img_ar = img_w / img_h
+
+            if img_ar > aspect_ratio:
+                # Image is wider than film - vertical axis is tight (height limiting)
+                margin_y = img_h * inset_percent / 100
+                inner_h = img_h - 2 * margin_y
+                inner_w = inner_h * aspect_ratio
+                margin_x = (img_w - inner_w) / 2
+            else:
+                # Image is taller than film - horizontal axis is tight (width limiting)
+                margin_x = img_w * inset_percent / 100
+                inner_w = img_w - 2 * margin_x
+                inner_h = inner_w / aspect_ratio
+                margin_y = (img_h - inner_h) / 2
+
+            inner_left = int(margin_x)
+            inner_right = int(img_w - margin_x)
+            inner_top = int(margin_y)
+            inner_bottom = int(img_h - margin_y)
+
+            # Sample from outside inner rectangle
+            sample_mask = np.ones((img_h, img_w), dtype=np.uint8) * 255
+            if inner_right > inner_left and inner_bottom > inner_top:
+                sample_mask[inner_top:inner_bottom, inner_left:inner_right] = 0
+
+            inner_rect = (inner_left, inner_top, inner_right, inner_bottom)
+
+            # Exclude sprocket holes (just in case)
+            sample_mask[sprocket_mask > 0] = 0
+
+    # Fallback: if insufficient samples, use image edges
     min_samples = 100
     if np.sum(sample_mask > 0) < min_samples:
-        has_sprocket_regions = False
         sample_mask = np.zeros((img_h, img_w), dtype=np.uint8)
         edge_size = max(10, int(min(img_h, img_w) * 0.05))
         sample_mask[:edge_size, :] = 255  # Top
@@ -719,7 +760,9 @@ def detect_film_base_color(
     film_base = np.median(sampled_pixels, axis=0).astype(np.uint8)
 
     if visualizer:
-        visualizer.save_film_base(img, sample_mask, film_base, has_sprocket_regions)
+        visualizer.save_film_base(
+            img, sample_mask, film_base, has_sprocket_regions, inset_percent, inner_rect
+        )
 
     return film_base
 
@@ -1096,6 +1139,7 @@ def detect_frame_bounds(
     sprocket_margin_percent: float = 0.0,
     edge_margins: Margins | None = None,
     ignore_margins: Margins | None = None,
+    film_base_inset_percent: float = 1.0,
 ) -> tuple[FrameBounds, list[int]]:
     """Detect frame boundaries in an image.
 
@@ -1107,6 +1151,7 @@ def detect_frame_bounds(
         sprocket_margin_percent: Additional percentage to crop beyond sprocket holes (0-100)
         edge_margins: Margins defining edge detection regions
         ignore_margins: Margins to crop before analysis
+        film_base_inset_percent: Diagonal inset percentage for film base sampling (no sprockets)
 
     Returns:
         Tuple of (FrameBounds object, [left, right, top, bottom] positions)
@@ -1221,7 +1266,14 @@ def detect_frame_bounds(
 
     # Step 3: Detect film base color from normalized image
     film_base_color = detect_film_base_color(
-        img, sprocket_mask, orientation, sprocket_curve1, sprocket_curve2, visualizer
+        img,
+        sprocket_mask,
+        orientation,
+        sprocket_curve1,
+        sprocket_curve2,
+        aspect_ratio,
+        film_base_inset_percent,
+        visualizer,
     )
 
     # Step 4: Create mask of film base regions

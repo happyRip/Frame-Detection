@@ -100,6 +100,12 @@ def parse_args():
         "vertical,horizontal (0,5), or top,right,bottom,left (0,5,0,5)",
     )
     parser.add_argument(
+        "--film-base-inset",
+        type=float,
+        default=1.0,
+        help="Diagonal inset percentage for film base sampling region (0-50, used when no sprockets)",
+    )
+    parser.add_argument(
         "--coords",
         action="store_true",
         help="Output crop coordinates (0.0-1.0) and angle to text file instead of cropped image",
@@ -138,6 +144,7 @@ def main():
             sprocket_margin_percent=args.sprocket_margin,
             edge_margins=edge_margins,
             ignore_margins=ignore_margins,
+            film_base_inset_percent=args.film_base_inset,
         )
     except ValueError as e:
         sys.exit(str(e))

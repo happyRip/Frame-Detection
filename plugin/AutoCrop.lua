@@ -165,6 +165,7 @@ function processPhotos(photos, settings)
 	local aspectRatio = settings.aspectRatio or "3:2"
 	local cropIn = settings.cropIn or 1.5
 	local sprocketMargin = settings.sprocketMargin or 0.1
+	local filmBaseInset = settings.filmBaseInset or 1.5
 	local edgeMargin = settings.edgeMargin or "5"
 	local ignoreMargin = settings.ignoreMargin or "0,1"
 	local resetCrop = settings.resetCrop or false
@@ -261,6 +262,8 @@ function processPhotos(photos, settings)
 				.. cropIn
 				.. " --sprocket-margin "
 				.. sprocketMargin
+				.. " --film-base-inset "
+				.. filmBaseInset
 				.. " --edge-margin "
 				.. edgeMargin
 				.. " --ignore-margin "

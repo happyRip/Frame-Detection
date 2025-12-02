@@ -430,6 +430,8 @@ class DebugVisualizer:
         sample_mask: np.ndarray,
         film_base: np.ndarray,
         from_sprocket_regions: bool,
+        inset_percent: float = 0.0,
+        inner_rect: tuple[int, int, int, int] | None = None,
     ):
         """Save visualization of film base color detection.
 
@@ -438,6 +440,8 @@ class DebugVisualizer:
             sample_mask: Mask showing sampled regions (255=sampled)
             film_base: Detected film base color (BGR)
             from_sprocket_regions: Whether samples came from sprocket regions
+            inset_percent: Diagonal inset percentage (for non-sprocket mode)
+            inner_rect: Inner rectangle bounds (left, top, right, bottom) if using aspect ratio mode
         """
         vis = img.copy()
         img_h, img_w = img.shape[:2]
@@ -446,6 +450,17 @@ class DebugVisualizer:
         overlay = vis.copy()
         overlay[sample_mask > 0] = (255, 255, 0)  # Cyan overlay for sampled areas
         cv2.addWeighted(overlay, 0.4, vis, 0.6, 0, vis)
+
+        # Draw inner rectangle if provided (aspect ratio mode)
+        if inner_rect is not None:
+            inner_left, inner_top, inner_right, inner_bottom = inner_rect
+            cv2.rectangle(
+                vis,
+                (inner_left, inner_top),
+                (inner_right, inner_bottom),
+                (0, 255, 0),
+                3,
+            )
 
         # Draw a color swatch showing the detected film base color
         swatch_size = max(80, min(img_h, img_w) // 8)
@@ -467,7 +482,12 @@ class DebugVisualizer:
         )
 
         # Add labels
-        source = "sprocket regions" if from_sprocket_regions else "image edges"
+        if from_sprocket_regions:
+            source = "sprocket regions"
+        elif inner_rect is not None:
+            source = f"outside frame (inset {inset_percent:.1f}%)"
+        else:
+            source = "image edges"
         cv2.putText(
             vis,
             f"Film base (from {source})",

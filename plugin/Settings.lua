@@ -13,6 +13,7 @@ local DEFAULTS = {
 	customAspectRatio = "2:3",
 	cropIn = 1.5,
 	sprocketMargin = 0.1,
+	filmBaseInset = 1.0,
 	edgeMargin = "5",
 	ignoreMargin = "0,1",
 	resetCrop = false,

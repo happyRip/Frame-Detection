@@ -89,6 +89,20 @@ local function buildCropSettingsTab(f, props, restoreDefaults)
 			}),
 
 			f:row({
+				f:static_text({ title = "Film Base Inset:", width = 100 }),
+				f:edit_field({
+					value = LrView.bind("filmBaseInset"),
+					width_in_digits = 4,
+					precision = 2,
+					min = 0,
+					max = 50,
+					alignment = "right",
+					tooltip = "Diagonal inset percentage for film base sampling region (used when no sprocket holes detected).",
+				}),
+				f:static_text({ title = "%" }),
+			}),
+
+			f:row({
 				f:static_text({ title = "Edge Margin:", width = 100 }),
 				f:edit_field({
 					value = LrView.bind("edgeMargin"),
