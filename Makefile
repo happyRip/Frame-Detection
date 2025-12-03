@@ -1,6 +1,6 @@
 # Lightroom plugin installation
 PLUGIN_NAME = NegativeAutoCrop.lrplugin
-PLUGIN_DIR = $(HOME)/Library/Application Support/Adobe/Lightroom Classic/Modules/$(PLUGIN_NAME)
+PLUGIN_DIR = $(HOME)/Library/Application Support/Adobe/Lightroom/Modules/$(PLUGIN_NAME)
 
 .PHONY: init
 init:
