@@ -9,7 +9,7 @@ import numpy as np
 
 from .filters import EdgeFilter, apply_filter
 from .models import EdgeGroup, FilmCutEnd, FilmType, FrameBounds, Line, Margins, Orientation
-from .separation import SeparationMethod, apply_all_separations, apply_separation
+from .separation import SeparationMethod, apply_separation
 
 if TYPE_CHECKING:
     from .visualizer import DebugVisualizer
@@ -1184,11 +1184,6 @@ def create_film_base_mask(
     Returns:
         Binary mask where film base regions are 255
     """
-    # When debugging, compare all separation methods
-    if visualizer:
-        all_separation_results = apply_all_separations(img, film_base_color, tolerance)
-        visualizer.save_separation_comparison(img, film_base_color, all_separation_results)
-
     # Apply selected separation method
     film_base_mask = apply_separation(img, film_base_color, separation_method, tolerance)
 
