@@ -7,7 +7,9 @@ from pathlib import Path
 import cv2
 
 from .detection import crop_frame, detect_frame_bounds
+from .filters import EdgeFilter
 from .models import FilmType, Margins
+from .separation import SeparationMethod
 
 DEFAULT_DELIM = "_"
 
@@ -117,6 +119,19 @@ def parse_args():
         help="Film type: 'negative' (bright sprocket holes), 'positive' (dark sprocket holes), "
         "or 'auto' to detect automatically (default: auto)",
     )
+    parser.add_argument(
+        "--edge-filter",
+        choices=["canny", "sobel", "scharr", "dog", "laplacian", "log"],
+        default="scharr",
+        help="Edge detection filter: canny, sobel, scharr (default), dog, laplacian, or log",
+    )
+    parser.add_argument(
+        "--separation-method",
+        choices=["color_distance", "clahe", "lab_distance", "hsv_distance", "adaptive", "gradient"],
+        default="color_distance",
+        help="Film base separation method: color_distance (default), clahe, lab_distance, "
+        "hsv_distance, adaptive, or gradient",
+    )
     return parser.parse_args()
 
 
@@ -147,6 +162,28 @@ def main():
     }
     film_type = film_type_map[args.film_type]
 
+    # Parse edge filter
+    edge_filter_map = {
+        "canny": EdgeFilter.CANNY,
+        "sobel": EdgeFilter.SOBEL,
+        "scharr": EdgeFilter.SCHARR,
+        "dog": EdgeFilter.DOG,
+        "laplacian": EdgeFilter.LAPLACIAN,
+        "log": EdgeFilter.LOG,
+    }
+    edge_filter = edge_filter_map[args.edge_filter]
+
+    # Parse separation method
+    separation_method_map = {
+        "color_distance": SeparationMethod.COLOR_DISTANCE,
+        "clahe": SeparationMethod.CLAHE,
+        "lab_distance": SeparationMethod.LAB_DISTANCE,
+        "hsv_distance": SeparationMethod.HSV_DISTANCE,
+        "adaptive": SeparationMethod.ADAPTIVE,
+        "gradient": SeparationMethod.GRADIENT,
+    }
+    separation_method = separation_method_map[args.separation_method]
+
     # Keep a copy of original image for debug visualization
     img_original = img.copy() if visualizer else None
 
@@ -161,6 +198,8 @@ def main():
             ignore_margins=ignore_margins,
             film_base_inset_percent=args.film_base_inset,
             film_type=film_type,
+            edge_filter=edge_filter,
+            separation_method=separation_method,
         )
     except ValueError as e:
         sys.exit(str(e))

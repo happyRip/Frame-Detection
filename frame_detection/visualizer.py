@@ -819,9 +819,33 @@ class DebugVisualizer:
 
         self._save("film_base_mask_cropped", vis)
 
-    def save_edges(self, edges: np.ndarray):
-        """Save edge detection result."""
-        self._save("edges", edges)
+    def save_edges(self, edges: np.ndarray, frame_bounds: FrameBounds | None = None):
+        """Save edge detection result with optional classified line overlay.
+
+        Args:
+            edges: Edge detection result (grayscale image)
+            frame_bounds: Optional FrameBounds with classified lines to overlay
+        """
+        if frame_bounds is None:
+            self._save("edges", edges)
+            return
+
+        # Convert to RGB for colored line overlay
+        edges_rgb = cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)
+
+        # Draw classified lines with colors
+        colors = {
+            "top": (255, 0, 0),      # Red
+            "bottom": (0, 255, 0),   # Green
+            "left": (0, 0, 255),     # Blue
+            "right": (255, 255, 0),  # Yellow
+        }
+        for edge_name, color in colors.items():
+            edge_group = getattr(frame_bounds, edge_name)
+            for line in edge_group.lines:
+                cv2.line(edges_rgb, (line.x1, line.y1), (line.x2, line.y2), color, 3)
+
+        self._save("edges", edges_rgb)
 
     def save_edges_variations(self, blurred: np.ndarray, median: float, current_low_factor: float, current_high_factor: float):
         """Save multiple Canny edge detection results with varying parameters.
@@ -1083,3 +1107,138 @@ class DebugVisualizer:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
         self._save("coords_output", vis)
+
+    def save_filter_comparison(
+        self,
+        mask: np.ndarray,
+        filter_results: dict[str, np.ndarray],
+    ):
+        """Save a grid comparing all edge filter outputs.
+
+        Args:
+            mask: Original input mask (film base mask)
+            filter_results: Dictionary mapping filter name to edge detection result
+        """
+        import matplotlib.pyplot as plt
+
+        n_filters = len(filter_results)
+        # Include original mask in the grid
+        n_total = n_filters + 1
+
+        # Determine grid layout (prefer wider layouts)
+        if n_total <= 4:
+            cols, rows = n_total, 1
+        elif n_total <= 8:
+            cols, rows = 4, 2
+        else:
+            cols = 4
+            rows = (n_total + cols - 1) // cols
+
+        fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
+        if rows == 1 and cols == 1:
+            axes = np.array([[axes]])
+        elif rows == 1:
+            axes = axes.reshape(1, -1)
+        elif cols == 1:
+            axes = axes.reshape(-1, 1)
+
+        # Flatten for easier indexing
+        axes_flat = axes.flatten()
+
+        # First cell: original mask
+        axes_flat[0].imshow(mask, cmap="gray")
+        axes_flat[0].set_title("Original Mask", fontsize=10, fontweight="bold")
+        axes_flat[0].axis("off")
+
+        # Remaining cells: filter results
+        for idx, (filter_name, result) in enumerate(filter_results.items(), start=1):
+            if idx < len(axes_flat):
+                axes_flat[idx].imshow(result, cmap="gray")
+                axes_flat[idx].set_title(filter_name.upper(), fontsize=10)
+                axes_flat[idx].axis("off")
+
+        # Hide unused axes
+        for idx in range(n_total, len(axes_flat)):
+            axes_flat[idx].axis("off")
+
+        fig.suptitle("Edge Filter Comparison", fontsize=14, fontweight="bold")
+        fig.tight_layout()
+        self.step += 1
+        fig.savefig(self.output_dir / f"{self.step:02d}_filter_comparison.png", dpi=150)
+        plt.close(fig)
+
+    def save_separation_comparison(
+        self,
+        img: np.ndarray,
+        film_base_color: np.ndarray,
+        separation_results: dict[str, np.ndarray],
+    ):
+        """Save a grid comparing all film base separation methods.
+
+        Args:
+            img: Original input image
+            film_base_color: Detected film base color (BGR)
+            separation_results: Dictionary mapping method name to mask result
+        """
+        import matplotlib.pyplot as plt
+
+        n_methods = len(separation_results)
+        # Include original image in the grid
+        n_total = n_methods + 1
+
+        # Determine grid layout
+        if n_total <= 4:
+            cols, rows = n_total, 1
+        elif n_total <= 8:
+            cols, rows = 4, 2
+        else:
+            cols = 4
+            rows = (n_total + cols - 1) // cols
+
+        fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
+        if rows == 1 and cols == 1:
+            axes = np.array([[axes]])
+        elif rows == 1:
+            axes = axes.reshape(1, -1)
+        elif cols == 1:
+            axes = axes.reshape(-1, 1)
+
+        axes_flat = axes.flatten()
+
+        # First cell: original image with film base color swatch
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        axes_flat[0].imshow(img_rgb)
+        # Add color swatch in corner
+        swatch_size = max(img.shape[0], img.shape[1]) // 8
+        b, g, r = film_base_color
+        axes_flat[0].add_patch(plt.Rectangle(
+            (10, 10), swatch_size, swatch_size,
+            facecolor=(r/255, g/255, b/255),
+            edgecolor='white', linewidth=2
+        ))
+        axes_flat[0].set_title(f"Original\nFilm base: BGR({b},{g},{r})", fontsize=9, fontweight="bold")
+        axes_flat[0].axis("off")
+
+        # Remaining cells: separation results
+        for idx, (method_name, mask) in enumerate(separation_results.items(), start=1):
+            if idx < len(axes_flat):
+                # Show mask overlaid on image
+                overlay = img_rgb.copy()
+                overlay[mask > 0] = [255, 0, 255]  # Magenta for film base
+                blended = cv2.addWeighted(img_rgb, 0.5, overlay, 0.5, 0)
+                axes_flat[idx].imshow(blended)
+
+                # Calculate coverage percentage
+                coverage = np.sum(mask > 0) / mask.size * 100
+                axes_flat[idx].set_title(f"{method_name}\n({coverage:.1f}% coverage)", fontsize=9)
+                axes_flat[idx].axis("off")
+
+        # Hide unused axes
+        for idx in range(n_total, len(axes_flat)):
+            axes_flat[idx].axis("off")
+
+        fig.suptitle("Film Base Separation Comparison", fontsize=14, fontweight="bold")
+        fig.tight_layout()
+        self.step += 1
+        fig.savefig(self.output_dir / f"{self.step:02d}_separation_comparison.png", dpi=150)
+        plt.close(fig)
