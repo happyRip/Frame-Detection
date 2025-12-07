@@ -111,6 +111,19 @@ function splitLinesToNumbers(data)
 	return result
 end
 
+-- Read error message from error file if it exists
+local function readErrorFile(dataPath)
+	local errorPath = dataPath .. ".err"
+	if LrFileUtils.exists(errorPath) then
+		local content = LrFileUtils.readFile(errorPath)
+		LrFileUtils.delete(errorPath) -- Clean up
+		if content then
+			return content:gsub("^%s*(.-)%s*$", "%1") -- Trim whitespace
+		end
+	end
+	return nil
+end
+
 function rotateCropForOrientation(crop, orientation)
 	if orientation == "AB" then
 		-- No adjustments needed: this is the orientation of the data
@@ -223,6 +236,8 @@ function processPhotos(photos, settings)
 		})
 
 		local numPhotos = exportSession:countRenditions()
+		local errors = {} -- Collect errors for summary
+		local successCount = 0
 
 		local renditionParams = {
 			progressScope = progressScope,
@@ -236,13 +251,10 @@ function processPhotos(photos, settings)
 				break
 			end
 
+			local fileName = rendition.photo:getFormattedMetadata("fileName")
+
 			-- Common caption for progress bar
-			local progressCaption = rendition.photo:getFormattedMetadata("fileName")
-				.. " ("
-				.. i
-				.. "/"
-				.. numPhotos
-				.. ")"
+			local progressCaption = fileName .. " (" .. i .. "/" .. numPhotos .. ")"
 
 			progressScope:setPortionComplete(i - 1, numPhotos)
 			progressScope:setCaption("Processing " .. progressCaption)
@@ -282,67 +294,102 @@ function processPhotos(photos, settings)
 			local cmd = pythonCommand:gsub("__ARGS__", args)
 			log:trace("Executing: " .. cmd)
 
-			exitCode = LrTasks.execute(cmd)
+			local exitCode = LrTasks.execute(cmd)
+			local processingFailed = false
 
 			if exitCode ~= 0 then
-				LrDialogs.showError(
-					"The Python script exited with a non-zero status: " .. exitCode .. "\n\nCommand line was:\n" .. cmd
-				)
-				break
-			end
-
-			if LrFileUtils.exists(dataPath) == false then
-				LrDialogs.showError(
-					"The Python script exited cleanly, but the output data file was not found:\n\n" .. dataPath
-				)
-				break
-			end
-
-			-- Read crop points from analysis output
-			-- The directions/sides here are relative to the image that was processed
-			rawData = LrFileUtils.readFile(dataPath)
-			cropData = splitLinesToNumbers(rawData)
-
-			rawCrop = {
-				left = cropData[1],
-				right = cropData[2],
-				top = cropData[3],
-				bottom = cropData[4],
-				angle = cropData[5],
-			}
-
-			-- Re-orient cropping data to "AB" so the crop is applied as intended
-			-- (Crop is always relative to the "AB" orientation in Lightroom)
-			developSettings = rendition.photo:getDevelopSettings()
-			log:trace("Orientation: " .. tostring(developSettings["orientation"]))
-			log:trace(
-				"Raw crop - L:"
-					.. rawCrop.left
-					.. " R:"
-					.. rawCrop.right
-					.. " T:"
-					.. rawCrop.top
-					.. " B:"
-					.. rawCrop.bottom
-			)
-			crop = rotateCropForOrientation(rawCrop, developSettings["orientation"])
-			log:trace(
-				"Final crop - L:" .. crop.left .. " R:" .. crop.right .. " T:" .. crop.top .. " B:" .. crop.bottom
-			)
-
-			LrTasks.startAsyncTask(function()
-				catalog:withWriteAccessDo("Apply crop", function(context)
-					setCrop(rendition.photo, crop.angle, crop.left, crop.right, crop.top, crop.bottom)
-				end, {
-					timeout = 2,
+				local errorMsg = readErrorFile(dataPath) or "Unknown error (exit code: " .. exitCode .. ")"
+				log:trace("Error processing " .. fileName .. ": " .. errorMsg)
+				table.insert(errors, {
+					photo = fileName,
+					error = errorMsg,
 				})
-			end)
+				processingFailed = true
+			elseif LrFileUtils.exists(dataPath) == false then
+				log:trace("Output file not found for " .. fileName)
+				table.insert(errors, {
+					photo = fileName,
+					error = "Output file was not created",
+				})
+				processingFailed = true
+			end
+
+			if not processingFailed then
+				-- Read crop points from analysis output
+				-- The directions/sides here are relative to the image that was processed
+				local rawData = LrFileUtils.readFile(dataPath)
+				local cropData = splitLinesToNumbers(rawData)
+
+				local rawCrop = {
+					left = cropData[1],
+					right = cropData[2],
+					top = cropData[3],
+					bottom = cropData[4],
+					angle = cropData[5],
+				}
+
+				-- Re-orient cropping data to "AB" so the crop is applied as intended
+				-- (Crop is always relative to the "AB" orientation in Lightroom)
+				local developSettings = rendition.photo:getDevelopSettings()
+				log:trace("Orientation: " .. tostring(developSettings["orientation"]))
+				log:trace(
+					"Raw crop - L:"
+						.. rawCrop.left
+						.. " R:"
+						.. rawCrop.right
+						.. " T:"
+						.. rawCrop.top
+						.. " B:"
+						.. rawCrop.bottom
+				)
+				local crop = rotateCropForOrientation(rawCrop, developSettings["orientation"])
+				log:trace(
+					"Final crop - L:" .. crop.left .. " R:" .. crop.right .. " T:" .. crop.top .. " B:" .. crop.bottom
+				)
+
+				LrTasks.startAsyncTask(function()
+					catalog:withWriteAccessDo("Apply crop", function(context)
+						setCrop(rendition.photo, crop.angle, crop.left, crop.right, crop.top, crop.bottom)
+					end, {
+						timeout = 2,
+					})
+				end)
+
+				successCount = successCount + 1
+				LrFileUtils.delete(dataPath)
+			end
 
 			LrFileUtils.delete(photoPath)
-			LrFileUtils.delete(dataPath)
 		end
 
 		progressScope:done()
+
+		-- Show summary if there were errors
+		if #errors > 0 then
+			local errorList = ""
+			for _, err in ipairs(errors) do
+				errorList = errorList .. "\n\n" .. err.photo .. ":\n" .. err.error
+			end
+
+			if successCount > 0 then
+				LrDialogs.message(
+					"Auto Crop completed with errors",
+					"Successfully processed "
+						.. successCount
+						.. " image(s).\nFailed to process "
+						.. #errors
+						.. " image(s):"
+						.. errorList,
+					"warning"
+				)
+			else
+				LrDialogs.message(
+					"Auto Crop failed",
+					"Failed to process all " .. #errors .. " image(s):" .. errorList,
+					"critical"
+				)
+			end
+		end
 	end)
 end
 

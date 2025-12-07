@@ -7,11 +7,20 @@ from pathlib import Path
 import cv2
 
 from .detection import crop_frame, detect_frame_bounds
+from .exceptions import FrameDetectionError, ImageReadError
 from .filters import EdgeFilter
 from .models import FilmType, Margins
 from .separation import SeparationMethod
 
 DEFAULT_DELIM = "_"
+
+
+def write_error(output_path: str | None, message: str) -> None:
+    """Write error message to error file for plugin to read."""
+    if output_path:
+        error_path = output_path + ".err"
+        with open(error_path, "w") as f:
+            f.write(message)
 
 
 def detect_delim(filename: str) -> str | None:
@@ -137,9 +146,15 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # Determine error output path (used if --output is set)
+    error_output = args.output if args.output else None
+
     img = cv2.imread(args.input)
     if img is None:
-        sys.exit(f"Could not read image: {args.input}")
+        err = ImageReadError(args.input)
+        write_error(error_output, err.user_message)
+        sys.exit(err.user_message)
 
     img_h, img_w = img.shape[:2]
     landscape = img_w >= img_h
@@ -201,8 +216,13 @@ def main():
             edge_filter=edge_filter,
             separation_method=separation_method,
         )
-    except ValueError as e:
-        sys.exit(str(e))
+    except FrameDetectionError as e:
+        write_error(error_output, e.user_message)
+        sys.exit(e.user_message)
+    except Exception as e:
+        msg = f"Unexpected error: {e}"
+        write_error(error_output, msg)
+        sys.exit(msg)
 
     left, right, top, bottom = bounds
 

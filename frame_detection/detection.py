@@ -7,6 +7,12 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
+from .exceptions import (
+    InvalidFrameCoordinatesError,
+    InvalidFrameRegionError,
+    NoFrameEdgesError,
+    NoLinesDetectedError,
+)
 from .filters import EdgeFilter, apply_filter
 from .models import EdgeGroup, FilmCutEnd, FilmType, FrameBounds, Line, Margins, Orientation
 from .separation import SeparationMethod, apply_separation
@@ -1742,16 +1748,10 @@ def detect_frame_bounds(
 
         if orientation == Orientation.HORIZONTAL:
             if y_min >= y_max:
-                raise ValueError(
-                    f"Invalid frame region detected: y_min={y_min} >= y_max={y_max}. "
-                    "Sprocket detection may have failed for this image."
-                )
+                raise InvalidFrameRegionError(f"y_min={y_min} >= y_max={y_max}")
         else:
             if x_min >= x_max:
-                raise ValueError(
-                    f"Invalid frame region detected: x_min={x_min} >= x_max={x_max}. "
-                    "Sprocket detection may have failed for this image."
-                )
+                raise InvalidFrameRegionError(f"x_min={x_min} >= x_max={x_max}")
     else:
         # No sprocket holes detected (e.g., medium format film)
         # Use full image as valid region
@@ -1847,7 +1847,7 @@ def detect_frame_bounds(
         visualizer.save_lines(img, lines)
 
     if not lines:
-        raise ValueError("No lines detected")
+        raise NoLinesDetectedError()
 
     # Calculate the actual margins used for visualization
     edge_margin_percent = max(
@@ -1872,7 +1872,7 @@ def detect_frame_bounds(
 
     if not frame_bounds.top.lines and not frame_bounds.bottom.lines:
         if not frame_bounds.left.lines and not frame_bounds.right.lines:
-            raise ValueError("No frame edges detected")
+            raise NoFrameEdgesError()
 
     # Get positions from edge groups
     top_positions = [line.avg_y for line in frame_bounds.top.lines]
@@ -1964,7 +1964,7 @@ def detect_frame_bounds(
         bottom = min(img_h, bottom)
 
     if right <= left or bottom <= top:
-        raise ValueError("Invalid frame coordinates detected")
+        raise InvalidFrameCoordinatesError()
 
     # Apply crop-in to exclude film base from final crop
     left, right, top, bottom = apply_crop_in(
