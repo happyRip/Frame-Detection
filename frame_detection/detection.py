@@ -972,6 +972,7 @@ def mask_sprocket_region(
     orientation: Orientation,
     curve1: np.ndarray | None,
     curve2: np.ndarray | None,
+    margin: int = 1,
 ) -> np.ndarray:
     """Zero out sprocket regions in a mask using fitted curves.
 
@@ -980,6 +981,7 @@ def mask_sprocket_region(
         orientation: Film orientation
         curve1: Fitted curve for top (horizontal) or left (vertical) boundary
         curve2: Fitted curve for bottom (horizontal) or right (vertical) boundary
+        margin: Extra pixels to mask inward from the curve boundary
 
     Returns:
         Mask with sprocket regions zeroed out
@@ -990,19 +992,55 @@ def mask_sprocket_region(
     if orientation == Orientation.HORIZONTAL:
         for x in range(img_w):
             if curve1 is not None and x < len(curve1):
-                y_top = max(0, int(curve1[x]))
+                y_top = max(0, int(curve1[x]) + margin)
                 result[:y_top, x] = 0
             if curve2 is not None and x < len(curve2):
-                y_bottom = min(img_h, int(curve2[x]))
+                y_bottom = min(img_h, int(curve2[x]) - margin)
                 result[y_bottom:, x] = 0
     else:
         for y in range(img_h):
             if curve1 is not None and y < len(curve1):
-                x_left = max(0, int(curve1[y]))
+                x_left = max(0, int(curve1[y]) + margin)
                 result[y, :x_left] = 0
             if curve2 is not None and y < len(curve2):
-                x_right = min(img_w, int(curve2[y]))
+                x_right = min(img_w, int(curve2[y]) - margin)
                 result[y, x_right:] = 0
+
+    return result
+
+
+def mask_cut_end_region(
+    mask: np.ndarray,
+    orientation: Orientation,
+    cut_end: FilmCutEnd,
+    removal_fraction: float = 0.10,
+) -> np.ndarray:
+    """Zero out cut end regions in a mask.
+
+    Args:
+        mask: Binary mask to modify
+        orientation: Film orientation
+        cut_end: Detected cut end edges
+        removal_fraction: Fraction of image to remove at cut ends
+
+    Returns:
+        Mask with cut end regions zeroed out
+    """
+    result = mask.copy()
+    img_h, img_w = mask.shape[:2]
+
+    if orientation == Orientation.HORIZONTAL:
+        removal_width = max(10, int(img_w * removal_fraction))
+        if cut_end.left:
+            result[:, :removal_width] = 0
+        if cut_end.right:
+            result[:, img_w - removal_width:] = 0
+    else:
+        removal_height = max(10, int(img_h * removal_fraction))
+        if cut_end.top:
+            result[:removal_height, :] = 0
+        if cut_end.bottom:
+            result[img_h - removal_height:, :] = 0
 
     return result
 
@@ -1261,6 +1299,7 @@ def detect_lines(
     x_max: int | None = None,
     visualizer: DebugVisualizer | None = None,
     edge_filter: EdgeFilter = EdgeFilter.CANNY,
+    cut_end: FilmCutEnd | None = None,
 ) -> tuple[list[Line], np.ndarray]:
     """Detect lines from film base mask boundaries using Hough transform.
 
@@ -1287,6 +1326,7 @@ def detect_lines(
         x_max: Maximum valid x coordinate (after sprocket cropping)
         visualizer: Optional debug visualizer
         edge_filter: Edge detection filter method to use
+        cut_end: Detected film cut ends to mask from edges
 
     Returns:
         Tuple of (list of detected Line objects, edges image)
@@ -1299,6 +1339,10 @@ def detect_lines(
     # Mask out sprocket regions from edges using curves
     if curve1 is not None or curve2 is not None:
         edges = mask_sprocket_region(edges, orientation, curve1, curve2)
+
+    # Mask out cut end regions from edges
+    if cut_end is not None and cut_end.any_detected:
+        edges = mask_cut_end_region(edges, orientation, cut_end)
 
     # Define margin boundaries
     if aspect_ratio is not None:
@@ -1800,7 +1844,8 @@ def detect_frame_bounds(
     lines, edges = detect_lines(
         img, film_base_mask, edge_margins, orientation,
         sprocket_curve1, sprocket_curve2, aspect_ratio,
-        y_min, y_max, x_min, x_max, visualizer, edge_filter
+        y_min, y_max, x_min, x_max, visualizer, edge_filter,
+        cut_end,
     )
 
     if visualizer:
