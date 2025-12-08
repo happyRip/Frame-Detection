@@ -1,7 +1,6 @@
 -- LR imports
 local LrApplication = import("LrApplication")
 local LrApplicationView = import("LrApplicationView")
-local LrBinding = import("LrBinding")
 local LrDevelopController = import("LrDevelopController")
 local LrDialogs = import("LrDialogs")
 local LrExportSession = import("LrExportSession")
@@ -57,7 +56,7 @@ end)
 
 local catalog = LrApplication.activeCatalog()
 
-function setCrop(photo, angle, cropLeft, cropRight, cropTop, cropBottom)
+local function setCrop(photo, angle, cropLeft, cropRight, cropTop, cropBottom)
 	if LrApplicationView.getCurrentModuleName() == "develop" and photo == catalog:getTargetPhoto() then
 		LrDevelopController.setValue("CropConstrainAspectRatio", false)
 		LrDevelopController.setValue("straightenAngle", angle)
@@ -82,7 +81,7 @@ function setCrop(photo, angle, cropLeft, cropRight, cropTop, cropBottom)
 end
 
 -- Convert a Windows absolute path to a Linux Sub-Sytem path
-function fixPath(winPath)
+local function fixPath(winPath)
 	-- Do nothing on OSX
 	if MAC_ENV then
 		return winPath
@@ -98,8 +97,8 @@ function fixPath(winPath)
 end
 
 -- Given a string delimited by whitespace, split into numbers
-function splitLinesToNumbers(data)
-	result = {}
+local function splitLinesToNumbers(data)
+	local result = {}
 
 	for val in string.gmatch(data, "%S+") do
 		result[#result + 1] = tonumber(val)
@@ -140,7 +139,7 @@ local CROP_TRANSFORMS = {
 	AD = { -4, -3, -2, -1 }, -- v-flip + 90° CW
 }
 
-function rotateCropForOrientation(crop, orientation)
+local function rotateCropForOrientation(crop, orientation)
 	local transform = CROP_TRANSFORMS[orientation]
 	if not transform then
 		return crop
@@ -165,7 +164,7 @@ function rotateCropForOrientation(crop, orientation)
 	}
 end
 
-function processPhotos(photos, settings)
+local function processPhotos(photos, settings)
 	settings = settings or {}
 	local aspectRatio = settings.aspectRatio or "2:3"
 	local filmType = settings.filmType or "auto"

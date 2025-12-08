@@ -176,11 +176,11 @@ local function buildDebugTab(f, props)
 			local content = LrFileUtils.readFile(logFile)
 			if content and #content > 0 then
 				LrFunctionContext.callWithContext("LogViewer", function(context)
-					local f = LrView.osFactory()
-					local contents = f:scrolled_view({
+					local vf = LrView.osFactory()
+					local contents = vf:scrolled_view({
 						width = 520,
 						height = 400,
-						f:static_text({
+						vf:static_text({
 							title = content,
 							width = 500,
 							height_in_lines = -1,
