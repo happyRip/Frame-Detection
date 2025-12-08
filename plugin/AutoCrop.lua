@@ -202,9 +202,20 @@ function processPhotos(photos, settings)
 	-- Configure logging
 	configureLogging(logEnabled, logPath)
 
-	-- Reset crops if requested
+	-- Reset crops for all photos if requested (before export starts)
 	if resetCrop then
-		LrDevelopController.resetCrop()
+		catalog:withWriteAccessDo("Reset crops", function()
+			for _, photo in ipairs(photos) do
+				photo:applyDevelopSettings({
+					CropLeft = 0,
+					CropRight = 1,
+					CropTop = 0,
+					CropBottom = 1,
+					CropAngle = 0,
+					CropConstrainAspectRatio = false,
+				})
+			end
+		end, { timeout = 10 })
 	end
 
 	LrFunctionContext.callWithContext("export", function(exportContext)
