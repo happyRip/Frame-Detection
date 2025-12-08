@@ -1762,6 +1762,7 @@ def detect_frame_bounds(
         x_max = img_w
         sprocket_curve1 = None
         sprocket_curve2 = None
+        cut_end = None
 
     # Apply ignore margins after sprocket detection
     ignore_top = int(orig_h * ignore_margins.top)
