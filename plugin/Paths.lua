@@ -86,7 +86,7 @@ local function startBackupFlow()
 		deleteDirectory(renderBackupPath)
 		-- Rename current render to backup
 		if LrFileUtils.exists(renderPath) then
-			os.rename(renderPath, renderBackupPath)
+			LrFileUtils.move(renderPath, renderBackupPath)
 		end
 		backupFlowComplete = true
 	end)
@@ -108,7 +108,7 @@ local function finalizeRender(tempPath)
 	end
 	-- Rename temp to render
 	if LrFileUtils.exists(tempPath) then
-		os.rename(tempPath, renderPath)
+		LrFileUtils.move(tempPath, renderPath)
 	end
 	-- Recreate symlink
 	createSymlink(renderPath, pluginRenderLink)
