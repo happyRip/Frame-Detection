@@ -40,21 +40,45 @@ def _detect_bright_sprocket_holes(
     bright_region = hist_smooth[200:]
 
     if bright_region.max() >= hist_smooth.max() * 0.02:
-        # Find the rightmost local maximum (actual peak, not just above threshold)
-        # A local max is where the derivative changes from positive to negative
-        derivative = np.diff(bright_region.astype(np.float64))
+        # Find the rightmost significant peak
+        # For sprocket holes, we want the rightmost peak (brightest values)
+        # even if it's smaller than other peaks in the region
 
-        # Find zero crossings in derivative (peaks)
-        # Look for where derivative goes from positive to negative
+        # Find all local maxima (where value is greater than both neighbors)
+        # Use low thresholds to catch smaller sprocket peaks
+        min_prominence = bright_region.max() * 0.02  # 2% of max as prominence threshold
+        min_height = bright_region.max() * 0.02  # Peak must be at least 2% of max height
+
+        peaks = []
+        for i in range(1, len(bright_region) - 1):
+            if bright_region[i] > bright_region[i - 1] and bright_region[i] > bright_region[i + 1]:
+                if bright_region[i] < min_height:
+                    continue
+                # Calculate prominence: height above the higher of the two surrounding valleys
+                # Look left for valley
+                left_min = bright_region[i]
+                for j in range(i - 1, -1, -1):
+                    if bright_region[j] < left_min:
+                        left_min = bright_region[j]
+                    if bright_region[j] > bright_region[i]:
+                        break
+                # Look right for valley
+                right_min = bright_region[i]
+                for j in range(i + 1, len(bright_region)):
+                    if bright_region[j] < right_min:
+                        right_min = bright_region[j]
+                    if bright_region[j] > bright_region[i]:
+                        break
+                prominence = bright_region[i] - max(left_min, right_min)
+                if prominence >= min_prominence:
+                    peaks.append((i, bright_region[i], prominence))
+
+        # Select the rightmost peak - this is most likely the sprocket holes
         peak_idx = None
-        min_peak_height = bright_region.max() * 0.1  # Peak must be at least 10% of max
-
-        for i in range(len(derivative) - 1, 0, -1):
-            # Check for peak: derivative goes from positive to negative (or zero)
-            if derivative[i] <= 0 and derivative[i - 1] > 0:
-                if bright_region[i] >= min_peak_height:
-                    peak_idx = 200 + i
-                    break
+        if peaks:
+            # Sort by index descending (rightmost first) and take the first one
+            peaks.sort(key=lambda x: x[0], reverse=True)
+            peak_idx = 200 + peaks[0][0]
 
         # Fallback: if no clear peak found, find rightmost point above threshold
         if peak_idx is None:
@@ -1317,6 +1341,7 @@ def detect_lines(
     visualizer: DebugVisualizer | None = None,
     edge_filter: EdgeFilter = EdgeFilter.CANNY,
     cut_end: FilmCutEnd | None = None,
+    sprocket_margin_percent: float = 0.0,
 ) -> tuple[list[Line], np.ndarray]:
     """Detect lines from film base mask boundaries using Hough transform.
 
@@ -1344,6 +1369,7 @@ def detect_lines(
         visualizer: Optional debug visualizer
         edge_filter: Edge detection filter method to use
         cut_end: Detected film cut ends to mask from edges
+        sprocket_margin_percent: Additional percentage to mask beyond sprocket curves
 
     Returns:
         Tuple of (list of detected Line objects, edges image)
@@ -1355,7 +1381,12 @@ def detect_lines(
 
     # Mask out sprocket regions from edges using curves
     if curve1 is not None or curve2 is not None:
-        edges = mask_sprocket_region(edges, orientation, curve1, curve2)
+        # Calculate sprocket margin in pixels based on orientation
+        if orientation == Orientation.HORIZONTAL:
+            sprocket_margin_px = max(1, int(img_h * sprocket_margin_percent / 100))
+        else:
+            sprocket_margin_px = max(1, int(img_w * sprocket_margin_percent / 100))
+        edges = mask_sprocket_region(edges, orientation, curve1, curve2, sprocket_margin_px)
 
     # Mask out cut end regions from edges
     if cut_end is not None and cut_end.any_detected:
@@ -1857,7 +1888,7 @@ def detect_frame_bounds(
         img, film_base_mask, edge_margins, orientation,
         sprocket_curve1, sprocket_curve2, aspect_ratio,
         y_min, y_max, x_min, x_max, visualizer, edge_filter,
-        cut_end,
+        cut_end, sprocket_margin_percent,
     )
 
     if visualizer:
