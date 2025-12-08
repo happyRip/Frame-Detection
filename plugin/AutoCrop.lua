@@ -126,56 +126,43 @@ local function readErrorFile(dataPath)
 	return nil
 end
 
+-- Crop transformation table: {left_src, right_src, top_src, bottom_src}
+-- Values 1-4 map to input: 1=left, 2=right, 3=top, 4=bottom
+-- Negative values invert: -n means (1 - input[n])
+local CROP_TRANSFORMS = {
+	AB = {  1,  2,  3,  4 }, -- identity
+	BA = { -2, -1,  3,  4 }, -- h-flip
+	DC = {  1,  2, -4, -3 }, -- v-flip
+	CD = { -2, -1, -4, -3 }, -- 180°
+	BC = {  3,  4, -2, -1 }, -- 90° CCW
+	DA = { -4, -3,  1,  2 }, -- 90° CW
+	CB = {  3,  4,  1,  2 }, -- h-flip + 90° CW
+	AD = { -4, -3, -2, -1 }, -- v-flip + 90° CW
+}
+
 function rotateCropForOrientation(crop, orientation)
-	if orientation == "AB" then
-		-- No adjustments needed: this is the orientation of the data
-		return crop
-	elseif orientation == "BC" then
-		return {
-			right = crop.bottom,
-			bottom = 1 - crop.left,
-			left = crop.top,
-			top = 1 - crop.right,
-			angle = crop.angle,
-		}
-	elseif orientation == "BA" then
-		-- Horizontally mirrored
-		return {
-			left = 1 - crop.right,
-			right = 1 - crop.left,
-			top = crop.top,
-			bottom = crop.bottom,
-			angle = crop.angle,
-		}
-	elseif orientation == "CD" then
-		return {
-			bottom = 1 - crop.top,
-			left = 1 - crop.right,
-			top = 1 - crop.bottom,
-			right = 1 - crop.left,
-			angle = crop.angle,
-		}
-	elseif orientation == "DC" then
-		-- Vertically mirrored
-		return {
-			left = crop.left,
-			right = crop.right,
-			top = 1 - crop.bottom,
-			bottom = 1 - crop.top,
-			angle = crop.angle,
-		}
-	elseif orientation == "DA" then
-		return {
-			left = 1 - crop.bottom,
-			top = crop.left,
-			right = 1 - crop.top,
-			bottom = crop.right,
-			angle = crop.angle,
-		}
-	else
-		-- Unknown orientation, return crop unchanged
+	local transform = CROP_TRANSFORMS[orientation]
+	if not transform then
 		return crop
 	end
+
+	local inputs = { crop.left, crop.right, crop.top, crop.bottom }
+
+	local function getValue(index)
+		if index > 0 then
+			return inputs[index]
+		else
+			return 1 - inputs[-index]
+		end
+	end
+
+	return {
+		left = getValue(transform[1]),
+		right = getValue(transform[2]),
+		top = getValue(transform[3]),
+		bottom = getValue(transform[4]),
+		angle = crop.angle,
+	}
 end
 
 function processPhotos(photos, settings)
@@ -345,8 +332,8 @@ function processPhotos(photos, settings)
 					angle = cropData[5],
 				}
 
-				-- Re-orient cropping data to "AB" so the crop is applied as intended
-				-- (Crop is always relative to the "AB" orientation in Lightroom)
+				-- Transform crop coordinates from displayed orientation to AB orientation
+				-- (Lightroom crops are relative to the original AB orientation)
 				local developSettings = rendition.photo:getDevelopSettings()
 				log:trace("Orientation: " .. tostring(developSettings["orientation"]))
 				log:trace(
