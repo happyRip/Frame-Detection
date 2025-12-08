@@ -40,17 +40,33 @@ def _detect_bright_sprocket_holes(
     bright_region = hist_smooth[200:]
 
     if bright_region.max() >= hist_smooth.max() * 0.02:
-        # Find the rightmost significant peak
-        threshold = bright_region.max() * 0.3
+        # Find the rightmost local maximum (actual peak, not just above threshold)
+        # A local max is where the derivative changes from positive to negative
+        derivative = np.diff(bright_region.astype(np.float64))
+
+        # Find zero crossings in derivative (peaks)
+        # Look for where derivative goes from positive to negative
         peak_idx = None
-        for i in range(len(bright_region) - 1, 0, -1):
-            if bright_region[i] > threshold:
-                peak_idx = 200 + i
-                break
+        min_peak_height = bright_region.max() * 0.1  # Peak must be at least 10% of max
+
+        for i in range(len(derivative) - 1, 0, -1):
+            # Check for peak: derivative goes from positive to negative (or zero)
+            if derivative[i] <= 0 and derivative[i - 1] > 0:
+                if bright_region[i] >= min_peak_height:
+                    peak_idx = 200 + i
+                    break
+
+        # Fallback: if no clear peak found, find rightmost point above threshold
+        if peak_idx is None:
+            threshold = bright_region.max() * 0.3
+            for i in range(len(bright_region) - 1, 0, -1):
+                if bright_region[i] > threshold:
+                    peak_idx = 200 + i
+                    break
 
         if peak_idx is not None and peak_idx >= 210:
             # Find the valley (minimum) before the peak
-            search_start = max(0, peak_idx - 200 - 30)  # Look up to 30 bins left of 200
+            search_start = max(0, peak_idx - 200 - 30)  # Look up to 30 bins left of peak
             search_end = peak_idx - 200
             valley_idx = (
                 200 + np.argmin(bright_region[search_start:search_end]) + search_start
