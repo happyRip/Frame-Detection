@@ -8,7 +8,9 @@ import sys
 from pathlib import Path
 
 PLUGIN_NAME = "NegativeAutoCrop.lrplugin"
-LIGHTROOM_MODULES_DIR = Path.home() / "Library/Application Support/Adobe/Lightroom Classic/Modules"
+LIGHTROOM_MODULES_DIR = (
+    Path.home() / "Library/Application Support/Adobe/Lightroom/Modules"
+)
 PLUGIN_DIR = LIGHTROOM_MODULES_DIR / PLUGIN_NAME
 
 LIGHTROOM_BUNDLE_ID = "com.adobe.LightroomClassicCC7"
@@ -17,7 +19,7 @@ LIGHTROOM_BUNDLE_ID = "com.adobe.LightroomClassicCC7"
 # @ = Command, $ = Shift, ~ = Option, ^ = Control
 SHORTCUTS = {
     "Auto Crop": "~$r",  # Option+Shift+R
-    "Settings": "^g",    # Control+G
+    "Settings": "^g",  # Control+G
 }
 
 
