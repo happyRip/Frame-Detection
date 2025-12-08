@@ -1958,6 +1958,9 @@ def detect_frame_bounds(
             bottom = top + expected_height
 
     # Fallback for cases with fewer than 3 edges
+    # Use sprocket boundaries to infer missing edge positions
+    has_sprockets = sprocket_curve1 is not None or sprocket_curve2 is not None
+
     if left is None or right is None or top is None or bottom is None:
         # Estimate frame size from what we have
         if has_top and has_bottom:
@@ -1966,19 +1969,30 @@ def detect_frame_bounds(
         elif has_left and has_right:
             expected_width = right - left
         else:
-            # Use the valid region based on orientation
-            if orientation == Orientation.HORIZONTAL:
-                height = int((y_max - y_min) * 0.9)
+            # Use the valid region based on sprocket boundaries
+            if has_sprockets:
+                if orientation == Orientation.HORIZONTAL:
+                    # Frame height is determined by sprocket boundaries
+                    height = y_max - y_min
+                else:
+                    # Frame width is determined by sprocket boundaries
+                    height = x_max - x_min
             else:
-                height = int(img_h * 0.9)
+                # No sprockets - use 90% of image
+                if orientation == Orientation.HORIZONTAL:
+                    height = int(img_h * 0.9)
+                else:
+                    height = int(img_h * 0.9)
             expected_width = int(height * aspect_ratio)
 
         if left is None and right is None:
-            if orientation == "vertical":
+            if orientation == Orientation.VERTICAL and has_sprockets:
+                # Vertical film with sprockets: center horizontally between sprocket boundaries
                 center_x = (x_min + x_max) // 2
                 left = center_x - expected_width // 2
                 right = center_x + expected_width // 2
             else:
+                # Center in the image
                 left = (img_w - expected_width) // 2
                 right = (img_w + expected_width) // 2
         elif left is None:
@@ -1988,12 +2002,16 @@ def detect_frame_bounds(
 
         expected_height = int((right - left) / aspect_ratio)
         if top is None and bottom is None:
-            if orientation == Orientation.HORIZONTAL:
+            if orientation == Orientation.HORIZONTAL and has_sprockets:
+                # Horizontal film with sprockets: center vertically between sprocket boundaries
                 center_y = (y_min + y_max) // 2
+                top = center_y - expected_height // 2
+                bottom = center_y + expected_height // 2
             else:
+                # Center in the image
                 center_y = img_h // 2
-            top = center_y - expected_height // 2
-            bottom = center_y + expected_height // 2
+                top = center_y - expected_height // 2
+                bottom = center_y + expected_height // 2
         elif top is None:
             top = bottom - expected_height
         elif bottom is None:

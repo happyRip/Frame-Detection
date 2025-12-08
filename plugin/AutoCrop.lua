@@ -12,6 +12,8 @@ local LrPathUtils = import("LrPathUtils")
 local LrProgressScope = import("LrProgressScope")
 local LrTasks = import("LrTasks")
 
+local Paths = require("Paths")
+
 local log = LrLogger("AutoCrop")
 local currentLogPath = nil
 
@@ -48,15 +50,10 @@ if WIN_ENV then
 	pythonCommand = "bash -c 'DISPLAY=:0 python \"" .. frameDetectionPath .. "\" __ARGS__'"
 end
 
--- Create directory to save temporary exports to
-local imgPreviewPath = LrPathUtils.child(_PLUGIN.path, "render")
-
-if LrFileUtils.exists(imgPreviewPath) ~= true then
-	LrFileUtils.createDirectory(imgPreviewPath)
-end
-
--- Create directory for debug output
-local debugPath = LrPathUtils.child(_PLUGIN.path, "debug")
+-- Initialize paths on module load
+LrTasks.startAsyncTask(function()
+	Paths.init()
+end)
 
 local catalog = LrApplication.activeCatalog()
 
@@ -192,7 +189,7 @@ function processPhotos(photos, settings)
 	local ignoreMargin = settings.ignoreMargin or "0,1"
 	local resetCrop = settings.resetCrop or false
 	local debug = settings.debug or false
-	local debugOutputPath = settings.debugPath or debugPath
+	local debugOutputPath = settings.debugPath or Paths.debug
 	local logEnabled = settings.logEnabled
 	if logEnabled == nil then
 		logEnabled = true
@@ -201,6 +198,10 @@ function processPhotos(photos, settings)
 
 	-- Configure logging
 	configureLogging(logEnabled, logPath)
+
+	-- Start backup flow (async) and create temp directory for this run
+	Paths.startBackupFlow()
+	local renderTempPath = Paths.createRenderTemp()
 
 	-- Reset crops for all photos if requested (before export starts)
 	if resetCrop then
@@ -232,7 +233,7 @@ function processPhotos(photos, settings)
 				LR_collisionHandling = "rename",
 				LR_export_bitDepth = "8",
 				LR_export_colorSpace = "sRGB",
-				LR_export_destinationPathPrefix = imgPreviewPath,
+				LR_export_destinationPathPrefix = renderTempPath,
 				LR_export_destinationType = "specificFolder",
 				LR_export_useSubfolder = false,
 				LR_format = "JPEG",
@@ -372,13 +373,13 @@ function processPhotos(photos, settings)
 				end)
 
 				successCount = successCount + 1
-				LrFileUtils.delete(dataPath)
 			end
-
-			LrFileUtils.delete(photoPath)
 		end
 
 		progressScope:done()
+
+		-- Finalize render: wait for backup flow, rename temp to render
+		Paths.finalizeRender(renderTempPath)
 
 		-- Show summary if there were errors
 		if #errors > 0 then

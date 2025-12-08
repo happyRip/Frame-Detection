@@ -1,10 +1,11 @@
 -- Settings storage for AutoCrop plugin
 
-local LrPathUtils = import("LrPathUtils")
 local LrPrefs = import("LrPrefs")
 
--- Paths
-local DEFAULT_DEBUG_PATH = LrPathUtils.child(_PLUGIN.path, "debug")
+local Paths = require("Paths")
+
+-- Default paths
+local DEFAULT_DEBUG_PATH = Paths.debug
 local DEFAULT_LOG_PATH = _PLUGIN.path
 
 -- Default settings
