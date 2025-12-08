@@ -114,12 +114,17 @@ end
 -- Read error message from error file if it exists
 local function readErrorFile(dataPath)
 	local errorPath = dataPath .. ".err"
+	log:trace("Looking for error file: " .. errorPath)
 	if LrFileUtils.exists(errorPath) then
+		log:trace("Error file found")
 		local content = LrFileUtils.readFile(errorPath)
 		LrFileUtils.delete(errorPath) -- Clean up
 		if content then
+			log:trace("Error content: " .. content)
 			return content:gsub("^%s*(.-)%s*$", "%1") -- Trim whitespace
 		end
+	else
+		log:trace("Error file not found")
 	end
 	return nil
 end
