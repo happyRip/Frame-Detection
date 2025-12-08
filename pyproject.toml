@@ -14,5 +14,11 @@ dependencies = [
     "pandas",
 ]
 
+[project.scripts]
+negative-auto-crop = "installer:main"
+
 [tool.setuptools.packages.find]
 include = ["frame_detection*"]
+
+[tool.setuptools]
+py-modules = ["installer"]

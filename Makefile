@@ -1,7 +1,3 @@
-# Lightroom plugin installation
-PLUGIN_NAME = NegativeAutoCrop.lrplugin
-PLUGIN_DIR = $(HOME)/Library/Application Support/Adobe/Lightroom/Modules/$(PLUGIN_NAME)
-
 .PHONY: init
 init:
 	@echo "Creating virtualenv..."
@@ -13,30 +9,11 @@ init:
 
 .PHONY: install
 install:
-	@mkdir -p "$(PLUGIN_DIR)"
-	@mkdir -p "$(PLUGIN_DIR)/frame_detection"
-	@echo "Installing Lua plugin files..."
-	@for f in plugin/*.lua; do \
-		cp "$$f" "$(PLUGIN_DIR)/"; \
-		echo "  Installed $$(basename $$f)"; \
-	done
-	@echo "Installing Python package..."
-	@for f in frame_detection/*.py; do \
-		cp "$$f" "$(PLUGIN_DIR)/frame_detection/"; \
-		echo "  Installed frame_detection/$$(basename $$f)"; \
-	done
-	@cp requirements.txt "$(PLUGIN_DIR)/"
-	@echo "Creating virtualenv..."
-	@python3 -m venv "$(PLUGIN_DIR)/venv"
-	@echo "Installing Python dependencies..."
-	@"$(PLUGIN_DIR)/venv/bin/pip" install -q -r "$(PLUGIN_DIR)/requirements.txt"
-	@echo ""
-	@echo "Plugin installed to $(PLUGIN_DIR)"
+	@python3 installer.py install
 
 .PHONY: uninstall
 uninstall:
-	@rm -rf "$(PLUGIN_DIR)"
-	@echo "Plugin uninstalled"
+	@python3 installer.py uninstall
 
 .PHONY: clean
 clean:
