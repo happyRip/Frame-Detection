@@ -98,13 +98,13 @@ local function buildFilmTab(f, props, runAutoCrop, navigatePrev, navigateNext)
 				f:spacer({ height = 10 }),
 
 				f:row({
-					fill_horizontal = 1,
-					alignment = "center",
+					f:static_text({ title = "", width = LABEL_WIDTH }),
 					f:push_button({
 						title = "<",
 						action = navigatePrev,
 						width = 30,
-						tooltip = "Go to previous photo",
+						enabled = LrView.bind("hasMultiplePhotos"),
+						tooltip = "Go to previous photo (requires multiple selection)",
 					}),
 					f:push_button({
 						title = "Auto Crop",
@@ -115,7 +115,8 @@ local function buildFilmTab(f, props, runAutoCrop, navigatePrev, navigateNext)
 						title = ">",
 						action = navigateNext,
 						width = 30,
-						tooltip = "Go to next photo",
+						enabled = LrView.bind("hasMultiplePhotos"),
+						tooltip = "Go to next photo (requires multiple selection)",
 					}),
 				}),
 			}),
@@ -867,6 +868,10 @@ local function showDialog()
 		for key, value in pairs(savedSettings) do
 			props[key] = value
 		end
+
+		-- Check if multiple photos are selected (for navigation)
+		local catalog = LrApplication.activeCatalog()
+		props.hasMultiplePhotos = #catalog:getTargetPhotos() > 1
 
 		-- Helper functions for proxy property sync
 		local function syncEdgeParamsFromFilter()

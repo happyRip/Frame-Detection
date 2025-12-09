@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 - Reorganized plugin settings dialog: new "Film" tab as first tab with film type and auto crop buttons, "Crop" tab now contains only crop-related settings
 - Moved "Restore Defaults" button to bottom left of main dialog window
+- Navigation buttons disabled when single photo selected
 
 ## [0.0.7] - 2025-12-09
 
