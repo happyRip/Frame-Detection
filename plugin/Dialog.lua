@@ -71,9 +71,61 @@ local SLIDER_WIDTH = 150
 -- UI Tabs
 --------------------------------------------------------------------------------
 
-local function buildCropSettingsTab(f, props, restoreDefaults, runAutoCrop, navigatePrev, navigateNext)
+local function buildFilmTab(f, props, runAutoCrop, navigatePrev, navigateNext)
 	return f:tab_view_item({
-		title = "Crop Settings",
+		title = "Film",
+		identifier = "film",
+		f:row({
+			fill_horizontal = 1,
+			f:column({
+				bind_to_object = props,
+				spacing = f:control_spacing(),
+				place = "horizontal_center",
+				fill_horizontal = 1,
+
+				f:row({
+					fill_horizontal = 1,
+					alignment = "center",
+					f:static_text({ title = "Film type", width = LABEL_WIDTH, alignment = "right" }),
+					f:popup_menu({
+						items = FILM_TYPES,
+						value = LrView.bind("filmType"),
+						width = POPUP_WIDTH,
+						tooltip = "Select the film type. Negative film has bright sprocket holes, positive (slide) film has dark sprocket holes. Auto-detect will try to determine the type automatically.",
+					}),
+				}),
+
+				f:spacer({ height = 10 }),
+
+				f:row({
+					fill_horizontal = 1,
+					alignment = "center",
+					f:push_button({
+						title = "<",
+						action = navigatePrev,
+						width = 30,
+						tooltip = "Go to previous photo",
+					}),
+					f:push_button({
+						title = "Auto Crop",
+						action = runAutoCrop,
+						tooltip = "Run auto crop on selected photos",
+					}),
+					f:push_button({
+						title = ">",
+						action = navigateNext,
+						width = 30,
+						tooltip = "Go to next photo",
+					}),
+				}),
+			}),
+		}),
+	})
+end
+
+local function buildCropSettingsTab(f, props)
+	return f:tab_view_item({
+		title = "Crop",
 		identifier = "crop",
 		f:row({
 			fill_horizontal = 1,
@@ -103,18 +155,6 @@ local function buildCropSettingsTab(f, props, restoreDefaults, runAutoCrop, navi
 							end,
 						}),
 						tooltip = "Enter a custom aspect ratio (e.g., 16:9).",
-					}),
-				}),
-
-				f:row({
-					fill_horizontal = 1,
-					alignment = "center",
-					f:static_text({ title = "Film type", width = LABEL_WIDTH, alignment = "right" }),
-					f:popup_menu({
-						items = FILM_TYPES,
-						value = LrView.bind("filmType"),
-						width = POPUP_WIDTH,
-						tooltip = "Select the film type. Negative film has bright sprocket holes, positive (slide) film has dark sprocket holes. Auto-detect will try to determine the type automatically.",
 					}),
 				}),
 
@@ -189,38 +229,11 @@ local function buildCropSettingsTab(f, props, restoreDefaults, runAutoCrop, navi
 				f:row({
 					fill_horizontal = 1,
 					alignment = "center",
+					f:static_text({ title = "Reset crop", width = LABEL_WIDTH, alignment = "right" }),
 					f:checkbox({
-						title = "Reset crop",
+						title = "",
 						value = LrView.bind("resetCrop"),
 						tooltip = "Resets any existing crop before processing the image.",
-					}),
-					f:push_button({
-						title = "Restore Defaults",
-						action = restoreDefaults,
-					}),
-				}),
-
-				f:spacer({ height = 10 }),
-
-				f:row({
-					fill_horizontal = 1,
-					alignment = "center",
-					f:push_button({
-						title = "<",
-						action = navigatePrev,
-						width = 30,
-						tooltip = "Go to previous photo",
-					}),
-					f:push_button({
-						title = "Auto Crop",
-						action = runAutoCrop,
-						tooltip = "Run auto crop on selected photos",
-					}),
-					f:push_button({
-						title = ">",
-						action = navigateNext,
-						width = 30,
-						tooltip = "Go to next photo",
 					}),
 				}),
 			}),
@@ -1197,11 +1210,20 @@ local function showDialog()
 		end
 
 		-- Build UI
-		local contents = f:tab_view({
-			buildCropSettingsTab(f, props, restoreDefaults, runAutoCrop, navigatePrev, navigateNext),
-			buildFiltersTab(f, props, generatePreview, generateEdgePreview, generateSeparationPreview),
-			buildDebugTab(f, props),
-			buildAboutTab(f),
+		local contents = f:column({
+			f:tab_view({
+				buildFilmTab(f, props, runAutoCrop, navigatePrev, navigateNext),
+				buildCropSettingsTab(f, props),
+				buildFiltersTab(f, props, generatePreview, generateEdgePreview, generateSeparationPreview),
+				buildDebugTab(f, props),
+				buildAboutTab(f),
+			}),
+			f:row({
+				f:push_button({
+					title = "Restore Defaults",
+					action = restoreDefaults,
+				}),
+			}),
 		})
 
 		-- Show dialog
