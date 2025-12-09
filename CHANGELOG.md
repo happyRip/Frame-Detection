@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.0.7] - 2025-12-09
+
 ### Added
 - JSON-based filter configuration via `--filter-config` CLI argument
 - FilterConfig dataclasses for structured parameter management
