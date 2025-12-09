@@ -41,6 +41,25 @@ local DEFAULTS = {
 	logEnabled = true,
 	logPath = DEFAULT_LOG_PATH,
 	commandPath = nil, -- Auto-discovered
+
+	-- Edge filter settings
+	edgeFilter = "scharr",
+	cannyLow = 50,
+	cannyHigh = 150,
+	sobelBlurSize = 5,
+	scharrBlurSize = 5,
+	laplacianBlurSize = 5,
+	dogSigma1 = 1.0,
+	dogSigma2 = 2.0,
+	logSigma = 2.0,
+
+	-- Separation method settings
+	separationMethod = "color_distance",
+	tolerance = 30,
+	claheClipLimit = 1.0,
+	claheTileSize = 32,
+	adaptiveBlockSize = 51,
+	gradientWeight = 0.5,
 }
 
 -- Get preferences table

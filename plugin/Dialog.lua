@@ -35,6 +35,24 @@ local FILM_TYPES = {
 	{ title = "Positive", value = "positive" },
 }
 
+local EDGE_FILTERS = {
+	{ title = "Canny", value = "canny" },
+	{ title = "Sobel", value = "sobel" },
+	{ title = "Scharr (default)", value = "scharr" },
+	{ title = "DoG (Difference of Gaussians)", value = "dog" },
+	{ title = "Laplacian", value = "laplacian" },
+	{ title = "LoG (Laplacian of Gaussian)", value = "log" },
+}
+
+local SEPARATION_METHODS = {
+	{ title = "Color Distance (default)", value = "color_distance" },
+	{ title = "CLAHE", value = "clahe" },
+	{ title = "LAB Distance", value = "lab_distance" },
+	{ title = "HSV Distance", value = "hsv_distance" },
+	{ title = "Adaptive", value = "adaptive" },
+	{ title = "Gradient", value = "gradient" },
+}
+
 --------------------------------------------------------------------------------
 -- UI Constants
 --------------------------------------------------------------------------------
@@ -44,6 +62,7 @@ local POPUP_WIDTH = 150
 local PATH_WIDTH = 300
 local DIGITS_WIDTH = 4
 local CHARS_WIDTH = 12
+local SLIDER_WIDTH = 150
 
 --------------------------------------------------------------------------------
 -- UI Tabs
@@ -201,6 +220,344 @@ local function buildCropSettingsTab(f, props, restoreDefaults, runAutoCrop, navi
 						tooltip = "Go to next photo",
 					}),
 				}),
+			}),
+		}),
+	})
+end
+
+local function buildFiltersTab(f, props, generatePreview)
+	-- Helper function for conditional visibility based on edge filter selection
+	local function visibleForFilter(filterValue)
+		return LrView.bind({
+			key = "edgeFilter",
+			transform = function(value)
+				return value == filterValue
+			end,
+		})
+	end
+
+	-- Helper function for showing blur_size filters (sobel, scharr, laplacian)
+	local function visibleForBlurFilters()
+		return LrView.bind({
+			key = "edgeFilter",
+			transform = function(value)
+				return value == "sobel" or value == "scharr" or value == "laplacian"
+			end,
+		})
+	end
+
+	-- Helper function for conditional visibility based on separation method
+	local function visibleForSeparation(methodValue)
+		return LrView.bind({
+			key = "separationMethod",
+			transform = function(value)
+				return value == methodValue
+			end,
+		})
+	end
+
+	return f:tab_view_item({
+		title = "Filters",
+		identifier = "filters",
+		f:column({
+			bind_to_object = props,
+			spacing = f:control_spacing(),
+			fill_horizontal = 1,
+
+			-- Edge Filter Section
+			f:static_text({
+				title = "Edge Detection",
+				font = "<system/bold>",
+			}),
+
+			f:row({
+				f:static_text({ title = "Edge filter", width = LABEL_WIDTH, alignment = "right" }),
+				f:popup_menu({
+					items = EDGE_FILTERS,
+					value = LrView.bind("edgeFilter"),
+					width = POPUP_WIDTH,
+					tooltip = "Select the edge detection filter for frame boundary detection. Scharr is recommended for most cases.",
+				}),
+			}),
+
+			-- Canny parameters
+			f:row({
+				visible = visibleForFilter("canny"),
+				f:static_text({ title = "Low threshold", width = LABEL_WIDTH, alignment = "right" }),
+				f:slider({
+					value = LrView.bind("cannyLow"),
+					min = 0,
+					max = 255,
+					integral = true,
+					width = SLIDER_WIDTH,
+				}),
+				f:edit_field({
+					value = LrView.bind("cannyLow"),
+					width_in_digits = 3,
+					min = 0,
+					max = 255,
+					tooltip = "Lower threshold for Canny edge detection (0-255). Lower values detect more edges.",
+				}),
+			}),
+			f:row({
+				visible = visibleForFilter("canny"),
+				f:static_text({ title = "High threshold", width = LABEL_WIDTH, alignment = "right" }),
+				f:slider({
+					value = LrView.bind("cannyHigh"),
+					min = 0,
+					max = 255,
+					integral = true,
+					width = SLIDER_WIDTH,
+				}),
+				f:edit_field({
+					value = LrView.bind("cannyHigh"),
+					width_in_digits = 3,
+					min = 0,
+					max = 255,
+					tooltip = "Upper threshold for Canny edge detection (0-255). Higher values filter weaker edges.",
+				}),
+			}),
+
+			-- Blur size for Sobel/Scharr/Laplacian
+			f:row({
+				visible = visibleForBlurFilters(),
+				f:static_text({ title = "Blur size", width = LABEL_WIDTH, alignment = "right" }),
+				f:slider({
+					value = LrView.bind({
+						keys = { "edgeFilter", "sobelBlurSize", "scharrBlurSize", "laplacianBlurSize" },
+						operation = function(binder, values)
+							local filter = values.edgeFilter
+							if filter == "sobel" then
+								return values.sobelBlurSize
+							elseif filter == "scharr" then
+								return values.scharrBlurSize
+							elseif filter == "laplacian" then
+								return values.laplacianBlurSize
+							end
+							return 5
+						end,
+					}),
+					min = 0,
+					max = 21,
+					integral = true,
+					width = SLIDER_WIDTH,
+				}),
+				f:edit_field({
+					value = LrView.bind({
+						keys = { "edgeFilter", "sobelBlurSize", "scharrBlurSize", "laplacianBlurSize" },
+						operation = function(binder, values)
+							local filter = values.edgeFilter
+							if filter == "sobel" then
+								return values.sobelBlurSize
+							elseif filter == "scharr" then
+								return values.scharrBlurSize
+							elseif filter == "laplacian" then
+								return values.laplacianBlurSize
+							end
+							return 5
+						end,
+					}),
+					width_in_digits = 2,
+					min = 0,
+					max = 21,
+					tooltip = "Gaussian blur kernel size (0 or odd numbers 1-21). Higher values reduce noise but may blur edges.",
+				}),
+			}),
+
+			-- DoG parameters
+			f:row({
+				visible = visibleForFilter("dog"),
+				f:static_text({ title = "Sigma 1", width = LABEL_WIDTH, alignment = "right" }),
+				f:slider({
+					value = LrView.bind("dogSigma1"),
+					min = 0.1,
+					max = 5.0,
+					width = SLIDER_WIDTH,
+				}),
+				f:edit_field({
+					value = LrView.bind("dogSigma1"),
+					width_in_digits = 4,
+					precision = 1,
+					min = 0.1,
+					max = 5.0,
+					tooltip = "First Gaussian sigma for DoG filter (0.1-5.0). Controls fine detail level.",
+				}),
+			}),
+			f:row({
+				visible = visibleForFilter("dog"),
+				f:static_text({ title = "Sigma 2", width = LABEL_WIDTH, alignment = "right" }),
+				f:slider({
+					value = LrView.bind("dogSigma2"),
+					min = 0.1,
+					max = 10.0,
+					width = SLIDER_WIDTH,
+				}),
+				f:edit_field({
+					value = LrView.bind("dogSigma2"),
+					width_in_digits = 4,
+					precision = 1,
+					min = 0.1,
+					max = 10.0,
+					tooltip = "Second Gaussian sigma for DoG filter (0.1-10.0). Should be larger than Sigma 1.",
+				}),
+			}),
+
+			-- LoG sigma
+			f:row({
+				visible = visibleForFilter("log"),
+				f:static_text({ title = "Sigma", width = LABEL_WIDTH, alignment = "right" }),
+				f:slider({
+					value = LrView.bind("logSigma"),
+					min = 0.1,
+					max = 5.0,
+					width = SLIDER_WIDTH,
+				}),
+				f:edit_field({
+					value = LrView.bind("logSigma"),
+					width_in_digits = 4,
+					precision = 1,
+					min = 0.1,
+					max = 5.0,
+					tooltip = "Gaussian sigma for LoG filter (0.1-5.0). Higher values smooth more before edge detection.",
+				}),
+			}),
+
+			f:spacer({ height = 15 }),
+
+			-- Separation Method Section
+			f:static_text({
+				title = "Film Base Separation",
+				font = "<system/bold>",
+			}),
+
+			f:row({
+				f:static_text({ title = "Method", width = LABEL_WIDTH, alignment = "right" }),
+				f:popup_menu({
+					items = SEPARATION_METHODS,
+					value = LrView.bind("separationMethod"),
+					width = POPUP_WIDTH,
+					tooltip = "Method for separating film base from image content. Color Distance works for most films.",
+				}),
+			}),
+
+			-- Tolerance slider (shared by all methods)
+			f:row({
+				f:static_text({ title = "Tolerance", width = LABEL_WIDTH, alignment = "right" }),
+				f:slider({
+					value = LrView.bind("tolerance"),
+					min = 1,
+					max = 100,
+					integral = true,
+					width = SLIDER_WIDTH,
+				}),
+				f:edit_field({
+					value = LrView.bind("tolerance"),
+					width_in_digits = 3,
+					min = 1,
+					max = 100,
+					tooltip = "Color distance tolerance (1-100). Higher values include more pixels as film base.",
+				}),
+			}),
+
+			-- CLAHE parameters
+			f:row({
+				visible = visibleForSeparation("clahe"),
+				f:static_text({ title = "Clip limit", width = LABEL_WIDTH, alignment = "right" }),
+				f:slider({
+					value = LrView.bind("claheClipLimit"),
+					min = 0.1,
+					max = 10.0,
+					width = SLIDER_WIDTH,
+				}),
+				f:edit_field({
+					value = LrView.bind("claheClipLimit"),
+					width_in_digits = 4,
+					precision = 1,
+					min = 0.1,
+					max = 10.0,
+					tooltip = "CLAHE clip limit (0.1-10.0). Higher values increase local contrast.",
+				}),
+			}),
+			f:row({
+				visible = visibleForSeparation("clahe"),
+				f:static_text({ title = "Tile size", width = LABEL_WIDTH, alignment = "right" }),
+				f:slider({
+					value = LrView.bind("claheTileSize"),
+					min = 8,
+					max = 128,
+					integral = true,
+					width = SLIDER_WIDTH,
+				}),
+				f:edit_field({
+					value = LrView.bind("claheTileSize"),
+					width_in_digits = 3,
+					min = 8,
+					max = 128,
+					tooltip = "CLAHE tile size (8-128). Larger tiles = broader contrast enhancement.",
+				}),
+			}),
+
+			-- Adaptive block size
+			f:row({
+				visible = visibleForSeparation("adaptive"),
+				f:static_text({ title = "Block size", width = LABEL_WIDTH, alignment = "right" }),
+				f:slider({
+					value = LrView.bind("adaptiveBlockSize"),
+					min = 11,
+					max = 201,
+					integral = true,
+					width = SLIDER_WIDTH,
+				}),
+				f:edit_field({
+					value = LrView.bind("adaptiveBlockSize"),
+					width_in_digits = 3,
+					min = 11,
+					max = 201,
+					tooltip = "Adaptive threshold block size (11-201, odd). Larger values consider broader context.",
+				}),
+			}),
+
+			-- Gradient weight
+			f:row({
+				visible = visibleForSeparation("gradient"),
+				f:static_text({ title = "Gradient weight", width = LABEL_WIDTH, alignment = "right" }),
+				f:slider({
+					value = LrView.bind("gradientWeight"),
+					min = 0.0,
+					max = 1.0,
+					width = SLIDER_WIDTH,
+				}),
+				f:edit_field({
+					value = LrView.bind("gradientWeight"),
+					width_in_digits = 4,
+					precision = 2,
+					min = 0.0,
+					max = 1.0,
+					tooltip = "Gradient contribution weight (0.0-1.0). Higher values enhance edges more.",
+				}),
+			}),
+
+			f:spacer({ height = 15 }),
+
+			-- Preview Section
+			f:static_text({
+				title = "Preview",
+				font = "<system/bold>",
+			}),
+
+			f:row({
+				f:push_button({
+					title = "Generate Preview",
+					action = generatePreview,
+					tooltip = "Generate a preview using current filter settings on the selected photo. Opens in your default image viewer.",
+				}),
+			}),
+
+			f:static_text({
+				title = "Preview will run frame detection with current settings and open the debug visualization in your default viewer.",
+				width = PATH_WIDTH,
+				height_in_lines = 2,
+				font = "<system/small>",
 			}),
 		}),
 	})
