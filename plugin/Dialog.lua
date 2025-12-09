@@ -13,7 +13,7 @@ local LrView = import("LrView")
 
 local AutoCrop = require("AutoCrop")
 local Info = require("Info")
-local JSON = require("JSON")
+local JsonEncoder = require("JsonEncoder")
 local Paths = require("Paths")
 local Settings = require("Settings")
 
@@ -239,16 +239,6 @@ local function buildFiltersTab(f, props, generatePreview)
 		})
 	end
 
-	-- Helper function for showing blur_size filters (sobel, scharr, laplacian)
-	local function visibleForBlurFilters()
-		return LrView.bind({
-			key = "edgeFilter",
-			transform = function(value)
-				return value == "sobel" or value == "scharr" or value == "laplacian"
-			end,
-		})
-	end
-
 	-- Helper function for conditional visibility based on separation method
 	local function visibleForSeparation(methodValue)
 		return LrView.bind({
@@ -259,6 +249,52 @@ local function buildFiltersTab(f, props, generatePreview)
 		})
 	end
 
+	-- Reset edge param 1 to default based on current filter
+	local function resetEdgeParam1()
+		local filter = props.edgeFilter
+		if filter == "canny" then
+			props.edgeParam1 = Settings.DEFAULTS.cannyLow
+		elseif filter == "sobel" or filter == "scharr" or filter == "laplacian" then
+			props.edgeParam1 = Settings.DEFAULTS.blurSize
+		elseif filter == "dog" then
+			props.edgeParam1 = Settings.DEFAULTS.dogSigma1
+		elseif filter == "log" then
+			props.edgeParam1 = Settings.DEFAULTS.logSigma
+		end
+	end
+
+	-- Reset edge param 2 to default based on current filter
+	local function resetEdgeParam2()
+		local filter = props.edgeFilter
+		if filter == "canny" then
+			props.edgeParam2 = Settings.DEFAULTS.cannyHigh
+		elseif filter == "dog" then
+			props.edgeParam2 = Settings.DEFAULTS.dogSigma2
+		end
+	end
+
+	-- Reset separation param 1 to default based on current method
+	local function resetSepParam1()
+		local method = props.separationMethod
+		if method == "clahe" then
+			props.sepParam1 = Settings.DEFAULTS.claheClipLimit
+		elseif method == "adaptive" then
+			props.sepParam1 = Settings.DEFAULTS.adaptiveBlockSize
+		elseif method == "gradient" then
+			props.sepParam1 = Settings.DEFAULTS.gradientWeight
+		end
+	end
+
+	-- Reset separation param 2 to default (CLAHE tile size)
+	local function resetSepParam2()
+		props.sepParam2 = Settings.DEFAULTS.claheTileSize
+	end
+
+	-- Reset tolerance to default
+	local function resetTolerance()
+		props.tolerance = Settings.DEFAULTS.tolerance
+	end
+
 	return f:tab_view_item({
 		title = "Filters",
 		identifier = "filters",
@@ -267,300 +303,230 @@ local function buildFiltersTab(f, props, generatePreview)
 			spacing = f:control_spacing(),
 			fill_horizontal = 1,
 
-			-- Edge Filter Section
-			f:static_text({
-				title = "Edge Detection",
-				font = "<system/bold>",
-			}),
+			-- Subtabs for Edge Detection and Film Base Separation
+			f:tab_view({
+				fill_horizontal = 1,
+				-- Edge Detection subtab
+				f:tab_view_item({
+					title = "Edge Detection",
+					identifier = "edge",
+					f:column({
+						bind_to_object = props,
+						spacing = f:control_spacing(),
 
-			f:row({
-				f:static_text({ title = "Edge filter", width = LABEL_WIDTH, alignment = "right" }),
-				f:popup_menu({
-					items = EDGE_FILTERS,
-					value = LrView.bind("edgeFilter"),
-					width = POPUP_WIDTH,
-					tooltip = "Select the edge detection filter for frame boundary detection. Scharr is recommended for most cases.",
-				}),
-			}),
+						f:row({
+							f:static_text({ title = "Filter", width = LABEL_WIDTH, alignment = "right" }),
+							f:popup_menu({
+								items = EDGE_FILTERS,
+								value = LrView.bind("edgeFilter"),
+								width = POPUP_WIDTH,
+								tooltip = "Select the edge detection filter. Scharr is recommended for most cases.",
+							}),
+						}),
 
-			-- Canny parameters
-			f:row({
-				visible = visibleForFilter("canny"),
-				f:static_text({ title = "Low threshold", width = LABEL_WIDTH, alignment = "right" }),
-				f:slider({
-					value = LrView.bind("cannyLow"),
-					min = 0,
-					max = 255,
-					integral = true,
-					width = SLIDER_WIDTH,
-				}),
-				f:edit_field({
-					value = LrView.bind("cannyLow"),
-					width_in_digits = 3,
-					min = 0,
-					max = 255,
-					tooltip = "Lower threshold for Canny edge detection (0-255). Lower values detect more edges.",
-				}),
-			}),
-			f:row({
-				visible = visibleForFilter("canny"),
-				f:static_text({ title = "High threshold", width = LABEL_WIDTH, alignment = "right" }),
-				f:slider({
-					value = LrView.bind("cannyHigh"),
-					min = 0,
-					max = 255,
-					integral = true,
-					width = SLIDER_WIDTH,
-				}),
-				f:edit_field({
-					value = LrView.bind("cannyHigh"),
-					width_in_digits = 3,
-					min = 0,
-					max = 255,
-					tooltip = "Upper threshold for Canny edge detection (0-255). Higher values filter weaker edges.",
-				}),
-			}),
+						-- Edge filter parameter row 1 (dynamic label with reset)
+						f:row({
+							f:push_button({
+								title = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v)
+										if v == "canny" then return "Low threshold"
+										elseif v == "sobel" or v == "scharr" or v == "laplacian" then return "Blur size"
+										elseif v == "dog" then return "Sigma 1"
+										elseif v == "log" then return "Sigma"
+										else return "Parameter 1"
+										end
+									end,
+								}),
+								width = LABEL_WIDTH,
+								action = resetEdgeParam1,
+								tooltip = "Click to reset to default",
+							}),
+							f:slider({
+								value = LrView.bind("edgeParam1"),
+								min = 0,
+								max = 255,
+								width = SLIDER_WIDTH,
+							}),
+							f:edit_field({
+								value = LrView.bind("edgeParam1"),
+								width_in_digits = 5,
+								min = 0,
+								max = 255,
+							}),
+						}),
 
-			-- Blur size for Sobel/Scharr/Laplacian
-			f:row({
-				visible = visibleForBlurFilters(),
-				f:static_text({ title = "Blur size", width = LABEL_WIDTH, alignment = "right" }),
-				f:slider({
-					value = LrView.bind({
-						keys = { "edgeFilter", "sobelBlurSize", "scharrBlurSize", "laplacianBlurSize" },
-						operation = function(binder, values)
-							local filter = values.edgeFilter
-							if filter == "sobel" then
-								return values.sobelBlurSize
-							elseif filter == "scharr" then
-								return values.scharrBlurSize
-							elseif filter == "laplacian" then
-								return values.laplacianBlurSize
-							end
-							return 5
-						end,
+						-- Edge filter parameter row 2 (only for Canny and DoG)
+						f:row({
+							f:push_button({
+								title = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v)
+										if v == "canny" then return "High threshold"
+										elseif v == "dog" then return "Sigma 2"
+										else return ""
+										end
+									end,
+								}),
+								width = LABEL_WIDTH,
+								action = resetEdgeParam2,
+								tooltip = "Click to reset to default",
+								visible = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v) return v == "canny" or v == "dog" end,
+								}),
+							}),
+							f:slider({
+								value = LrView.bind("edgeParam2"),
+								min = 0,
+								max = 255,
+								width = SLIDER_WIDTH,
+								visible = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v) return v == "canny" or v == "dog" end,
+								}),
+							}),
+							f:edit_field({
+								value = LrView.bind("edgeParam2"),
+								width_in_digits = 5,
+								min = 0,
+								max = 255,
+								visible = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v) return v == "canny" or v == "dog" end,
+								}),
+							}),
+						}),
 					}),
-					min = 0,
-					max = 21,
-					integral = true,
-					width = SLIDER_WIDTH,
 				}),
-				f:edit_field({
-					value = LrView.bind({
-						keys = { "edgeFilter", "sobelBlurSize", "scharrBlurSize", "laplacianBlurSize" },
-						operation = function(binder, values)
-							local filter = values.edgeFilter
-							if filter == "sobel" then
-								return values.sobelBlurSize
-							elseif filter == "scharr" then
-								return values.scharrBlurSize
-							elseif filter == "laplacian" then
-								return values.laplacianBlurSize
-							end
-							return 5
-						end,
+
+				-- Film Base Separation subtab
+				f:tab_view_item({
+					title = "Film Base",
+					identifier = "separation",
+					f:column({
+						bind_to_object = props,
+						spacing = f:control_spacing(),
+
+						f:row({
+							f:static_text({ title = "Method", width = LABEL_WIDTH, alignment = "right" }),
+							f:popup_menu({
+								items = SEPARATION_METHODS,
+								value = LrView.bind("separationMethod"),
+								width = POPUP_WIDTH,
+								tooltip = "Method for separating film base from image content. Color Distance works for most films.",
+							}),
+						}),
+
+						-- Tolerance slider (shared by all methods)
+						f:row({
+							f:push_button({
+								title = "Tolerance",
+								width = LABEL_WIDTH,
+								action = resetTolerance,
+								tooltip = "Click to reset to default",
+							}),
+							f:slider({
+								value = LrView.bind("tolerance"),
+								min = 1,
+								max = 100,
+								integral = true,
+								width = SLIDER_WIDTH,
+							}),
+							f:edit_field({
+								value = LrView.bind("tolerance"),
+								width_in_digits = 3,
+								min = 1,
+								max = 100,
+								tooltip = "Color distance tolerance (1-100). Higher values include more pixels as film base.",
+							}),
+						}),
+
+						-- Separation method parameter row 1 (dynamic label with reset)
+						f:row({
+							f:push_button({
+								title = LrView.bind({
+									key = "separationMethod",
+									transform = function(v)
+										if v == "clahe" then return "Clip limit"
+										elseif v == "adaptive" then return "Block size"
+										elseif v == "gradient" then return "Gradient weight"
+										else return ""
+										end
+									end,
+								}),
+								width = LABEL_WIDTH,
+								action = resetSepParam1,
+								tooltip = "Click to reset to default",
+								visible = LrView.bind({
+									key = "separationMethod",
+									transform = function(v) return v == "clahe" or v == "adaptive" or v == "gradient" end,
+								}),
+							}),
+							f:slider({
+								value = LrView.bind("sepParam1"),
+								min = 0,
+								max = 201,
+								width = SLIDER_WIDTH,
+								visible = LrView.bind({
+									key = "separationMethod",
+									transform = function(v) return v == "clahe" or v == "adaptive" or v == "gradient" end,
+								}),
+							}),
+							f:edit_field({
+								value = LrView.bind("sepParam1"),
+								width_in_digits = 5,
+								min = 0,
+								max = 201,
+								visible = LrView.bind({
+									key = "separationMethod",
+									transform = function(v) return v == "clahe" or v == "adaptive" or v == "gradient" end,
+								}),
+							}),
+						}),
+
+						-- Separation method parameter row 2 (only CLAHE has 2nd param)
+						f:row({
+							f:push_button({
+								title = "Tile size",
+								width = LABEL_WIDTH,
+								action = resetSepParam2,
+								tooltip = "Click to reset to default",
+								visible = visibleForSeparation("clahe"),
+							}),
+							f:slider({
+								value = LrView.bind("sepParam2"),
+								min = 8,
+								max = 128,
+								integral = true,
+								width = SLIDER_WIDTH,
+								visible = visibleForSeparation("clahe"),
+							}),
+							f:edit_field({
+								value = LrView.bind("sepParam2"),
+								width_in_digits = 5,
+								min = 8,
+								max = 128,
+								visible = visibleForSeparation("clahe"),
+							}),
+						}),
 					}),
-					width_in_digits = 2,
-					min = 0,
-					max = 21,
-					tooltip = "Gaussian blur kernel size (0 or odd numbers 1-21). Higher values reduce noise but may blur edges.",
 				}),
 			}),
 
-			-- DoG parameters
-			f:row({
-				visible = visibleForFilter("dog"),
-				f:static_text({ title = "Sigma 1", width = LABEL_WIDTH, alignment = "right" }),
-				f:slider({
-					value = LrView.bind("dogSigma1"),
-					min = 0.1,
-					max = 5.0,
-					width = SLIDER_WIDTH,
-				}),
-				f:edit_field({
-					value = LrView.bind("dogSigma1"),
-					width_in_digits = 4,
-					precision = 1,
-					min = 0.1,
-					max = 5.0,
-					tooltip = "First Gaussian sigma for DoG filter (0.1-5.0). Controls fine detail level.",
-				}),
-			}),
-			f:row({
-				visible = visibleForFilter("dog"),
-				f:static_text({ title = "Sigma 2", width = LABEL_WIDTH, alignment = "right" }),
-				f:slider({
-					value = LrView.bind("dogSigma2"),
-					min = 0.1,
-					max = 10.0,
-					width = SLIDER_WIDTH,
-				}),
-				f:edit_field({
-					value = LrView.bind("dogSigma2"),
-					width_in_digits = 4,
-					precision = 1,
-					min = 0.1,
-					max = 10.0,
-					tooltip = "Second Gaussian sigma for DoG filter (0.1-10.0). Should be larger than Sigma 1.",
-				}),
-			}),
+			f:spacer({ height = 10 }),
 
-			-- LoG sigma
-			f:row({
-				visible = visibleForFilter("log"),
-				f:static_text({ title = "Sigma", width = LABEL_WIDTH, alignment = "right" }),
-				f:slider({
-					value = LrView.bind("logSigma"),
-					min = 0.1,
-					max = 5.0,
-					width = SLIDER_WIDTH,
-				}),
-				f:edit_field({
-					value = LrView.bind("logSigma"),
-					width_in_digits = 4,
-					precision = 1,
-					min = 0.1,
-					max = 5.0,
-					tooltip = "Gaussian sigma for LoG filter (0.1-5.0). Higher values smooth more before edge detection.",
-				}),
-			}),
-
-			f:spacer({ height = 15 }),
-
-			-- Separation Method Section
-			f:static_text({
-				title = "Film Base Separation",
-				font = "<system/bold>",
-			}),
-
-			f:row({
-				f:static_text({ title = "Method", width = LABEL_WIDTH, alignment = "right" }),
-				f:popup_menu({
-					items = SEPARATION_METHODS,
-					value = LrView.bind("separationMethod"),
-					width = POPUP_WIDTH,
-					tooltip = "Method for separating film base from image content. Color Distance works for most films.",
-				}),
-			}),
-
-			-- Tolerance slider (shared by all methods)
-			f:row({
-				f:static_text({ title = "Tolerance", width = LABEL_WIDTH, alignment = "right" }),
-				f:slider({
-					value = LrView.bind("tolerance"),
-					min = 1,
-					max = 100,
-					integral = true,
-					width = SLIDER_WIDTH,
-				}),
-				f:edit_field({
-					value = LrView.bind("tolerance"),
-					width_in_digits = 3,
-					min = 1,
-					max = 100,
-					tooltip = "Color distance tolerance (1-100). Higher values include more pixels as film base.",
-				}),
-			}),
-
-			-- CLAHE parameters
-			f:row({
-				visible = visibleForSeparation("clahe"),
-				f:static_text({ title = "Clip limit", width = LABEL_WIDTH, alignment = "right" }),
-				f:slider({
-					value = LrView.bind("claheClipLimit"),
-					min = 0.1,
-					max = 10.0,
-					width = SLIDER_WIDTH,
-				}),
-				f:edit_field({
-					value = LrView.bind("claheClipLimit"),
-					width_in_digits = 4,
-					precision = 1,
-					min = 0.1,
-					max = 10.0,
-					tooltip = "CLAHE clip limit (0.1-10.0). Higher values increase local contrast.",
-				}),
-			}),
-			f:row({
-				visible = visibleForSeparation("clahe"),
-				f:static_text({ title = "Tile size", width = LABEL_WIDTH, alignment = "right" }),
-				f:slider({
-					value = LrView.bind("claheTileSize"),
-					min = 8,
-					max = 128,
-					integral = true,
-					width = SLIDER_WIDTH,
-				}),
-				f:edit_field({
-					value = LrView.bind("claheTileSize"),
-					width_in_digits = 3,
-					min = 8,
-					max = 128,
-					tooltip = "CLAHE tile size (8-128). Larger tiles = broader contrast enhancement.",
-				}),
-			}),
-
-			-- Adaptive block size
-			f:row({
-				visible = visibleForSeparation("adaptive"),
-				f:static_text({ title = "Block size", width = LABEL_WIDTH, alignment = "right" }),
-				f:slider({
-					value = LrView.bind("adaptiveBlockSize"),
-					min = 11,
-					max = 201,
-					integral = true,
-					width = SLIDER_WIDTH,
-				}),
-				f:edit_field({
-					value = LrView.bind("adaptiveBlockSize"),
-					width_in_digits = 3,
-					min = 11,
-					max = 201,
-					tooltip = "Adaptive threshold block size (11-201, odd). Larger values consider broader context.",
-				}),
-			}),
-
-			-- Gradient weight
-			f:row({
-				visible = visibleForSeparation("gradient"),
-				f:static_text({ title = "Gradient weight", width = LABEL_WIDTH, alignment = "right" }),
-				f:slider({
-					value = LrView.bind("gradientWeight"),
-					min = 0.0,
-					max = 1.0,
-					width = SLIDER_WIDTH,
-				}),
-				f:edit_field({
-					value = LrView.bind("gradientWeight"),
-					width_in_digits = 4,
-					precision = 2,
-					min = 0.0,
-					max = 1.0,
-					tooltip = "Gradient contribution weight (0.0-1.0). Higher values enhance edges more.",
-				}),
-			}),
-
-			f:spacer({ height = 15 }),
-
-			-- Preview Section
-			f:static_text({
-				title = "Preview",
-				font = "<system/bold>",
-			}),
-
+			-- Preview Section (outside subtabs)
 			f:row({
 				f:push_button({
 					title = "Generate Preview",
 					action = generatePreview,
-					tooltip = "Generate a preview using current filter settings on the selected photo. Opens in your default image viewer.",
+					tooltip = "Generate a preview using current filter settings on the selected photo.",
 				}),
-			}),
-
-			f:static_text({
-				title = "Preview will run frame detection with current settings and open the debug visualization in your default viewer.",
-				width = PATH_WIDTH,
-				height_in_lines = 2,
-				font = "<system/small>",
+				f:static_text({
+					title = "Opens debug visualization in default viewer",
+					font = "<system/small>",
+				}),
 			}),
 		}),
 	})
@@ -707,6 +673,10 @@ local function buildDebugTab(f, props)
 					width = PATH_WIDTH,
 					tooltip = "Path to the negative-auto-crop command (auto-discovered from Homebrew).",
 				}),
+				f:push_button({
+					title = "Browse...",
+					action = chooseFolder("Select negative-auto-crop executable", "commandPath"),
+				}),
 			}),
 
 			f:spacer({ height = 10 }),
@@ -769,6 +739,84 @@ local function showDialog()
 		for key, value in pairs(savedSettings) do
 			props[key] = value
 		end
+
+		-- Helper functions for proxy property sync
+		local function syncEdgeParamsFromFilter()
+			local filter = props.edgeFilter
+			if filter == "canny" then
+				props.edgeParam1 = props.cannyLow
+				props.edgeParam2 = props.cannyHigh
+			elseif filter == "sobel" or filter == "scharr" or filter == "laplacian" then
+				props.edgeParam1 = props.blurSize
+				props.edgeParam2 = 0
+			elseif filter == "dog" then
+				props.edgeParam1 = props.dogSigma1
+				props.edgeParam2 = props.dogSigma2
+			elseif filter == "log" then
+				props.edgeParam1 = props.logSigma
+				props.edgeParam2 = 0
+			end
+		end
+
+		local function syncEdgeParamsToFilter()
+			local filter = props.edgeFilter
+			if filter == "canny" then
+				props.cannyLow = props.edgeParam1
+				props.cannyHigh = props.edgeParam2
+			elseif filter == "sobel" or filter == "scharr" or filter == "laplacian" then
+				props.blurSize = props.edgeParam1
+			elseif filter == "dog" then
+				props.dogSigma1 = props.edgeParam1
+				props.dogSigma2 = props.edgeParam2
+			elseif filter == "log" then
+				props.logSigma = props.edgeParam1
+			end
+		end
+
+		local function syncSepParamsFromMethod()
+			local method = props.separationMethod
+			if method == "clahe" then
+				props.sepParam1 = props.claheClipLimit
+				props.sepParam2 = props.claheTileSize
+			elseif method == "adaptive" then
+				props.sepParam1 = props.adaptiveBlockSize
+				props.sepParam2 = 0
+			elseif method == "gradient" then
+				props.sepParam1 = props.gradientWeight
+				props.sepParam2 = 0
+			else
+				props.sepParam1 = 0
+				props.sepParam2 = 0
+			end
+		end
+
+		local function syncSepParamsToMethod()
+			local method = props.separationMethod
+			if method == "clahe" then
+				props.claheClipLimit = props.sepParam1
+				props.claheTileSize = props.sepParam2
+			elseif method == "adaptive" then
+				props.adaptiveBlockSize = props.sepParam1
+			elseif method == "gradient" then
+				props.gradientWeight = props.sepParam1
+			end
+		end
+
+		-- Initialize proxy properties
+		syncEdgeParamsFromFilter()
+		syncSepParamsFromMethod()
+
+		-- Add observers for filter/method changes
+		props:addObserver("edgeFilter", function()
+			syncEdgeParamsFromFilter()
+		end)
+		props:addObserver("edgeParam1", syncEdgeParamsToFilter)
+		props:addObserver("edgeParam2", syncEdgeParamsToFilter)
+		props:addObserver("separationMethod", function()
+			syncSepParamsFromMethod()
+		end)
+		props:addObserver("sepParam1", syncSepParamsToMethod)
+		props:addObserver("sepParam2", syncSepParamsToMethod)
 
 		-- Reset function
 		local function restoreDefaults()
@@ -873,12 +921,8 @@ local function showDialog()
 				if props.edgeFilter == "canny" then
 					filterConfig.edge_filter.low_threshold = props.cannyLow
 					filterConfig.edge_filter.high_threshold = props.cannyHigh
-				elseif props.edgeFilter == "sobel" then
-					filterConfig.edge_filter.blur_size = props.sobelBlurSize
-				elseif props.edgeFilter == "scharr" then
-					filterConfig.edge_filter.blur_size = props.scharrBlurSize
-				elseif props.edgeFilter == "laplacian" then
-					filterConfig.edge_filter.blur_size = props.laplacianBlurSize
+				elseif props.edgeFilter == "sobel" or props.edgeFilter == "scharr" or props.edgeFilter == "laplacian" then
+					filterConfig.edge_filter.blur_size = props.blurSize
 				elseif props.edgeFilter == "dog" then
 					filterConfig.edge_filter.sigma1 = props.dogSigma1
 					filterConfig.edge_filter.sigma2 = props.dogSigma2
@@ -896,7 +940,7 @@ local function showDialog()
 					filterConfig.separation.gradient_weight = props.gradientWeight
 				end
 
-				local configJson, jsonErr = JSON.encode(filterConfig)
+				local configJson, jsonErr = JsonEncoder.encode(filterConfig)
 				if not configJson then
 					LrDialogs.message("Error", "Failed to encode filter config: " .. (jsonErr or "unknown"), "critical")
 					return

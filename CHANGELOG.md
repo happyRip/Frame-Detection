@@ -20,9 +20,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - Adaptive: block size
   - Gradient: gradient weight
 - New "Filters" tab in Lightroom plugin dialog with:
+  - Edge Detection and Film Base subtabs
   - Edge filter selection and parameter tuning
   - Separation method selection and parameter tuning
-  - Live preview: generates debug visualization with current settings
+  - Clickable parameter labels to reset to defaults
+  - Generate Preview button for testing filter settings
+
+### Fixed
+- Renamed JSON.lua to JsonEncoder.lua to avoid Lightroom reserved name conflict
 
 ## [0.0.6] - 2025-12-09
 

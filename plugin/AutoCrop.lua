@@ -11,7 +11,7 @@ local LrPathUtils = import("LrPathUtils")
 local LrProgressScope = import("LrProgressScope")
 local LrTasks = import("LrTasks")
 
-local JSON = require("JSON")
+local JsonEncoder = require("JsonEncoder")
 local Paths = require("Paths")
 
 local log = LrLogger("AutoCrop")
@@ -167,12 +167,8 @@ local function buildFilterConfig(settings)
 	if filter == "canny" then
 		config.edge_filter.low_threshold = settings.cannyLow or 50
 		config.edge_filter.high_threshold = settings.cannyHigh or 150
-	elseif filter == "sobel" then
-		config.edge_filter.blur_size = settings.sobelBlurSize or 5
-	elseif filter == "scharr" then
-		config.edge_filter.blur_size = settings.scharrBlurSize or 5
-	elseif filter == "laplacian" then
-		config.edge_filter.blur_size = settings.laplacianBlurSize or 5
+	elseif filter == "sobel" or filter == "scharr" or filter == "laplacian" then
+		config.edge_filter.blur_size = settings.blurSize or 5
 	elseif filter == "dog" then
 		config.edge_filter.sigma1 = settings.dogSigma1 or 1.0
 		config.edge_filter.sigma2 = settings.dogSigma2 or 2.0
@@ -215,7 +211,7 @@ local function processPhotos(photos, settings)
 
 	-- Build filter config
 	local filterConfig = buildFilterConfig(settings)
-	local filterConfigJson, jsonErr = JSON.encode(filterConfig)
+	local filterConfigJson, jsonErr = JsonEncoder.encode(filterConfig)
 	if not filterConfigJson then
 		LrDialogs.message("Configuration Error", "Failed to encode filter config: " .. (jsonErr or "unknown"), "critical")
 		return
