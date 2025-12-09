@@ -1,7 +1,7 @@
 -- Simple JSON encoder for Lightroom plugins
 -- Handles encoding Lua tables to JSON strings for the filter config
 
-local JSON = {}
+local JsonEncoder = {}
 
 -- Escape special characters in strings for JSON
 local function escapeString(s)
@@ -94,7 +94,7 @@ local function encode(value, indent, currentIndent)
 end
 
 -- Public encode function with error handling
-function JSON.encode(value)
+function JsonEncoder.encode(value)
 	local success, result = pcall(encode, value, 2, 0)
 	if success then
 		return result, nil
@@ -104,8 +104,8 @@ function JSON.encode(value)
 end
 
 -- Write JSON to file with error handling
-function JSON.writeFile(path, value)
-	local jsonStr, encodeErr = JSON.encode(value)
+function JsonEncoder.writeFile(path, value)
+	local jsonStr, encodeErr = JsonEncoder.encode(value)
 	if encodeErr then
 		return false, encodeErr
 	end
@@ -125,4 +125,4 @@ function JSON.writeFile(path, value)
 	return true, nil
 end
 
-return JSON
+return JsonEncoder
