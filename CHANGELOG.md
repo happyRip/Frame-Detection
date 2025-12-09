@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.0.3] - 2025-12-09
+
 ### Changed
 - Installation method changed to Homebrew distribution
 - CLI tool and Lightroom plugin now installed separately
