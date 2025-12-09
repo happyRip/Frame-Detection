@@ -946,9 +946,10 @@ local function showDialog()
 					return
 				end
 
-				-- Create temp directory for preview
-				local tempDir = Paths.createRenderTemp()
-				local previewPath = LrPathUtils.child(tempDir, "preview.jpg")
+				-- Create temp directory for preview using preview backup flow
+				Paths.startPreviewBackupFlow()
+				local tempDir = Paths.createPreviewTemp()
+				local previewImagePath = LrPathUtils.child(tempDir, "preview.jpg")
 				local debugDir = LrPathUtils.child(tempDir, "debug")
 				LrFileUtils.createDirectory(debugDir)
 
@@ -987,7 +988,7 @@ local function showDialog()
 
 					for _, rendition in exportSession:renditions() do
 						rendition:waitForRender()
-						previewPath = rendition.destinationPath
+						previewImagePath = rendition.destinationPath
 					end
 				end)
 
@@ -1005,7 +1006,7 @@ local function showDialog()
 				local cmd = '"'
 					.. props.commandPath
 					.. '" detect "'
-					.. previewPath
+					.. previewImagePath
 					.. '" --debug-dir "'
 					.. debugDir
 					.. '" --filter-config "'
@@ -1020,7 +1021,7 @@ local function showDialog()
 
 				if exitCode ~= 0 then
 					-- Check for error file
-					local errorPath = previewPath .. ".txt.err"
+					local errorPath = previewImagePath .. ".txt.err"
 					local errorMsg = "Detection failed (exit code: " .. exitCode .. ")"
 					if LrFileUtils.exists(errorPath) then
 						local content = LrFileUtils.readFile(errorPath)
@@ -1032,19 +1033,25 @@ local function showDialog()
 					return
 				end
 
-				-- Find and open the debug visualization image
-				local debugImages = {}
+				-- Find filter-relevant debug images
+				-- Pattern matching for debug image filenames (numbered prefixes)
+				local relevantImages = {}
 				for file in LrFileUtils.files(debugDir) do
 					if file:match("%.png$") or file:match("%.jpg$") then
-						table.insert(debugImages, file)
+						local filename = LrPathUtils.leafName(file)
+						-- Include film mask (separation) and edges (edge filter) visualizations
+						if filename:match("mask") or filename:match("edges") or filename:match("output") then
+							table.insert(relevantImages, file)
+						end
 					end
 				end
 
-				if #debugImages > 0 then
-					-- Sort to get the last one (typically the final visualization)
-					table.sort(debugImages)
-					local lastImage = debugImages[#debugImages]
-					LrShell.openFilesInApp({ lastImage }, "open")
+				-- Finalize preview directory
+				Paths.finalizePreview(tempDir)
+
+				if #relevantImages > 0 then
+					-- Open all relevant images
+					LrShell.openFilesInApp(relevantImages, "open")
 				else
 					LrDialogs.message("Preview", "Detection completed but no debug images were generated.", "info")
 				end

@@ -25,6 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - Separation method selection and parameter tuning
   - Clickable parameter labels to reset to defaults
   - Generate Preview button for testing filter settings
+- Preview backup flow with `.bak` rotation for preview temp directories
+- Preview now shows filter-relevant debug images (mask, edges, output)
 
 ### Fixed
 - Renamed JSON.lua to JsonEncoder.lua to avoid Lightroom reserved name conflict
