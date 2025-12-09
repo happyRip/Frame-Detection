@@ -1,6 +1,6 @@
 """Frame detection and cropping for film negatives."""
 
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 
 
 def __getattr__(name):
