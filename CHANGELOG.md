@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- CLI no longer requires OpenCV for `install`/`uninstall` commands (lazy imports)
+
 ## [0.0.3] - 2025-12-09
 
 ### Changed
