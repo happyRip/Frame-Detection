@@ -2,6 +2,7 @@
 
 local LrApplication = import("LrApplication")
 local LrBinding = import("LrBinding")
+local LrColor = import("LrColor")
 local LrDialogs = import("LrDialogs")
 local LrExportSession = import("LrExportSession")
 local LrFileUtils = import("LrFileUtils")
@@ -98,7 +99,7 @@ local function buildFilmTab(f, props, runAutoCrop, navigatePrev, navigateNext)
 						items = FILM_TYPES,
 						value = LrView.bind("filmType"),
 						width = POPUP_WIDTH,
-						tooltip = "Select the film type. Negative film has bright film base, positive (slide) film has dark film base. Auto-detect will try to determine the type automatically.",
+						tooltip = "Select the film type. Negative film has bright film base, positive (slide) film has dark film base.",
 					}),
 				}),
 
@@ -110,7 +111,17 @@ local function buildFilmTab(f, props, runAutoCrop, navigatePrev, navigateNext)
 						items = SPROCKET_TYPES,
 						value = LrView.bind("sprocketType"),
 						width = POPUP_WIDTH,
-						tooltip = "Select the sprocket hole type. 'None' skips sprocket detection (for medium format). 'Bright' for bright holes, 'Dark' for dark holes. Auto-detect will try to determine automatically.",
+						tooltip = "Select the sprocket hole type. 'None' skips sprocket detection (for medium format). 'Bright' for bright holes, 'Dark' for dark holes.",
+					}),
+				}),
+
+				f:row({
+					fill_horizontal = 1,
+					alignment = "center",
+					f:static_text({
+						title = "For best results, set Film and Sprocket type manually.\nAuto-detect is experimental.",
+						text_color = LrColor(0.5, 0.5, 0.5),
+						height_in_lines = 2,
 					}),
 				}),
 
@@ -974,6 +985,19 @@ local function showDialog()
 		local function restoreDefaults()
 			for key, value in pairs(Settings.DEFAULTS) do
 				props[key] = value
+			end
+			-- Auto-detect command path after restoring defaults
+			if not props.commandPath or props.commandPath == "" then
+				local paths = {
+					"/opt/homebrew/bin/negative-auto-crop",
+					"/usr/local/bin/negative-auto-crop",
+				}
+				for _, path in ipairs(paths) do
+					if LrFileUtils.exists(path) then
+						props.commandPath = path
+						break
+					end
+				end
 			end
 		end
 
