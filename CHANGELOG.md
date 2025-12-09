@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.0.9] - 2025-12-09
+
 ### Added
 - New `--sprocket-type` CLI option to control sprocket hole detection separately from film type:
   - `none` - skip sprocket detection (medium format, pre-cropped images)
