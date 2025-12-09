@@ -38,6 +38,13 @@ local FILM_TYPES = {
 	{ title = "Positive", value = "positive" },
 }
 
+local SPROCKET_TYPES = {
+	{ title = "Auto-detect", value = "auto" },
+	{ title = "None", value = "none" },
+	{ title = "Bright", value = "bright" },
+	{ title = "Dark", value = "dark" },
+}
+
 local EDGE_FILTERS = {
 	{ title = "Canny", value = "canny" },
 	{ title = "Sobel", value = "sobel" },
@@ -91,7 +98,19 @@ local function buildFilmTab(f, props, runAutoCrop, navigatePrev, navigateNext)
 						items = FILM_TYPES,
 						value = LrView.bind("filmType"),
 						width = POPUP_WIDTH,
-						tooltip = "Select the film type. Negative film has bright sprocket holes, positive (slide) film has dark sprocket holes. Auto-detect will try to determine the type automatically.",
+						tooltip = "Select the film type. Negative film has bright film base, positive (slide) film has dark film base. Auto-detect will try to determine the type automatically.",
+					}),
+				}),
+
+				f:row({
+					fill_horizontal = 1,
+					alignment = "center",
+					f:static_text({ title = "Sprocket type", width = LABEL_WIDTH, alignment = "right" }),
+					f:popup_menu({
+						items = SPROCKET_TYPES,
+						value = LrView.bind("sprocketType"),
+						width = POPUP_WIDTH,
+						tooltip = "Select the sprocket hole type. 'None' skips sprocket detection (for medium format). 'Bright' for bright holes, 'Dark' for dark holes. Auto-detect will try to determine automatically.",
 					}),
 				}),
 
@@ -1154,6 +1173,8 @@ local function showDialog()
 						.. (props.aspectRatio == "custom" and props.customAspectRatio or props.aspectRatio)
 						.. " --film-type "
 						.. props.filmType
+						.. " --sprocket-type "
+						.. props.sprocketType
 
 					local exitCode = LrTasks.execute(cmd)
 					progressScope:done()

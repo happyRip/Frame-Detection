@@ -32,6 +32,21 @@ class FilmType(Enum):
     AUTO = "auto"
 
 
+class SprocketType(Enum):
+    """Type of sprocket holes expected in the image.
+
+    NONE: Skip sprocket detection entirely (medium format, pre-cropped images)
+    BRIGHT: Sprocket holes appear bright (light passes through during scan)
+    DARK: Sprocket holes appear dark (opaque during scan)
+    AUTO: Automatically detect based on histogram analysis
+    """
+
+    NONE = "none"
+    BRIGHT = "bright"
+    DARK = "dark"
+    AUTO = "auto"
+
+
 @dataclass
 class Margins:
     """Represents margins for edges (top, right, bottom, left)."""

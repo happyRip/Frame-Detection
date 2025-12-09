@@ -23,6 +23,7 @@ from .models import (
     Line,
     Margins,
     Orientation,
+    SprocketType,
 )
 from .separation import SeparationMethod, apply_separation
 
@@ -349,15 +350,15 @@ def _evaluate_sprocket_mask_quality(
     return coverage_ratio, edge_concentration
 
 
-def _auto_detect_film_type(
+def _auto_detect_sprocket_type(
     gray: np.ndarray,
     hist_smooth: np.ndarray,
     img: np.ndarray | None = None,
     visualizer: DebugVisualizer | None = None,
-) -> tuple[FilmType, np.ndarray, int | None, np.ndarray]:
-    """Auto-detect film type based on sprocket mask quality comparison.
+) -> tuple[SprocketType, np.ndarray, int | None, np.ndarray]:
+    """Auto-detect sprocket type based on sprocket mask quality comparison.
 
-    Detects film type by running both bright and dark sprocket detection,
+    Detects sprocket type by running both bright and dark sprocket detection,
     then comparing which produces a better quality mask (valid coverage
     and edge concentration).
 
@@ -374,7 +375,7 @@ def _auto_detect_film_type(
         visualizer: Optional debug visualizer
 
     Returns:
-        Tuple of (detected_film_type, sprocket_mask, threshold_idx, edge_analysis_mask)
+        Tuple of (detected_sprocket_type, sprocket_mask, threshold_idx, edge_analysis_mask)
     """
     # Try both detection methods
     bright_mask, bright_threshold = _detect_bright_sprocket_holes(gray, hist_smooth)
@@ -406,27 +407,27 @@ def _auto_detect_film_type(
     # Decision logic: prefer the mask that produces valid detection
     if dark_valid and not bright_valid:
         chosen, reason = "dark", "Dark valid, bright invalid"
-        result = FilmType.POSITIVE, dark_mask, dark_threshold, edge_mask
+        result = SprocketType.DARK, dark_mask, dark_threshold, edge_mask
     elif bright_valid and not dark_valid:
         chosen, reason = "bright", "Bright valid, dark invalid"
-        result = FilmType.NEGATIVE, bright_mask, bright_threshold, edge_mask
+        result = SprocketType.BRIGHT, bright_mask, bright_threshold, edge_mask
     elif dark_valid and bright_valid:
         # Both valid - use edge concentration as tiebreaker
         if dark_edge_conc > bright_edge_conc:
             chosen, reason = "dark", f"Both valid, dark edge conc ({dark_edge_conc:.1%}) > bright ({bright_edge_conc:.1%})"
-            result = FilmType.POSITIVE, dark_mask, dark_threshold, edge_mask
+            result = SprocketType.DARK, dark_mask, dark_threshold, edge_mask
         else:
             chosen, reason = "bright", f"Both valid, bright edge conc ({bright_edge_conc:.1%}) >= dark ({dark_edge_conc:.1%})"
-            result = FilmType.NEGATIVE, bright_mask, bright_threshold, edge_mask
+            result = SprocketType.BRIGHT, bright_mask, bright_threshold, edge_mask
     else:
         # Neither valid - fall back to brightness analysis
         bright_ratio, dark_ratio, _ = _analyze_edge_brightness(gray)
         if dark_ratio > bright_ratio:
             chosen, reason = "fallback-dark", f"Neither valid, fallback: dark_ratio ({dark_ratio:.1%}) > bright_ratio ({bright_ratio:.1%})"
-            result = FilmType.POSITIVE, dark_mask, dark_threshold, edge_mask
+            result = SprocketType.DARK, dark_mask, dark_threshold, edge_mask
         else:
             chosen, reason = "fallback-bright", f"Neither valid, fallback: bright_ratio ({bright_ratio:.1%}) >= dark_ratio ({dark_ratio:.1%})"
-            result = FilmType.NEGATIVE, bright_mask, bright_threshold, edge_mask
+            result = SprocketType.BRIGHT, bright_mask, bright_threshold, edge_mask
 
     # Save comparison visualization
     if visualizer and img is not None:
@@ -447,24 +448,30 @@ def _auto_detect_film_type(
 
 def detect_sprocket_holes(
     img: np.ndarray,
-    film_type: FilmType = FilmType.AUTO,
+    sprocket_type: SprocketType = SprocketType.AUTO,
     visualizer: DebugVisualizer | None = None,
-) -> tuple[np.ndarray, FilmType]:
-    """Detect sprocket holes based on film type.
+) -> tuple[np.ndarray, SprocketType]:
+    """Detect sprocket holes based on sprocket type.
 
-    For negative film, sprocket holes appear as bright/white regions.
-    For positive film, sprocket holes appear as dark/black regions.
+    For bright sprocket holes, they appear as bright/white regions.
+    For dark sprocket holes, they appear as dark/black regions.
     Auto mode detects based on histogram analysis and edge concentration.
+    None mode skips detection entirely.
 
     Args:
         img: Input image as numpy array
-        film_type: Type of film (NEGATIVE, POSITIVE, or AUTO)
+        sprocket_type: Type of sprocket holes (NONE, BRIGHT, DARK, or AUTO)
         visualizer: Optional debug visualizer to save intermediate images
 
     Returns:
         Tuple of (binary mask where sprocket holes are marked as 255,
-                  detected or specified film type)
+                  detected or specified sprocket type)
     """
+    # Handle NONE - skip detection entirely
+    if sprocket_type == SprocketType.NONE:
+        empty_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+        return empty_mask, SprocketType.NONE
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     # Compute histogram
@@ -478,15 +485,15 @@ def detect_sprocket_holes(
     bright_ratio, dark_ratio, edge_mask = _analyze_edge_brightness(gray)
     edge_metrics = (bright_ratio, dark_ratio)
 
-    if film_type == FilmType.AUTO:
-        detected_type, sprocket_mask, threshold_idx, _ = _auto_detect_film_type(
+    if sprocket_type == SprocketType.AUTO:
+        detected_type, sprocket_mask, threshold_idx, _ = _auto_detect_sprocket_type(
             gray, hist_smooth, img, visualizer
         )
-    elif film_type == FilmType.NEGATIVE:
-        detected_type = FilmType.NEGATIVE
+    elif sprocket_type == SprocketType.BRIGHT:
+        detected_type = SprocketType.BRIGHT
         sprocket_mask, threshold_idx = _detect_bright_sprocket_holes(gray, hist_smooth)
-    else:  # FilmType.POSITIVE
-        detected_type = FilmType.POSITIVE
+    else:  # SprocketType.DARK
+        detected_type = SprocketType.DARK
         sprocket_mask, threshold_idx = _detect_dark_sprocket_holes(gray, hist_smooth)
 
     if visualizer:
@@ -1744,7 +1751,7 @@ def detect_frame_bounds(
     edge_margins: Margins | None = None,
     ignore_margins: Margins | None = None,
     film_base_inset_percent: float = 1.0,
-    film_type: FilmType = FilmType.AUTO,
+    sprocket_type: SprocketType = SprocketType.AUTO,
     edge_filter: EdgeFilter = EdgeFilter.CANNY,
     separation_method: SeparationMethod = SeparationMethod.COLOR_DISTANCE,
     filter_config: FilterConfig | None = None,
@@ -1761,7 +1768,7 @@ def detect_frame_bounds(
         edge_margins: Margins defining edge detection regions
         ignore_margins: Margins to crop before analysis
         film_base_inset_percent: Diagonal inset percentage for film base sampling (no sprockets)
-        film_type: Type of film (NEGATIVE, POSITIVE, or AUTO for auto-detection)
+        sprocket_type: Type of sprocket holes (NONE, BRIGHT, DARK, or AUTO for auto-detection)
         edge_filter: Edge detection filter method to use
         separation_method: Method to use for separating film base from image
         filter_config: Optional FilterConfig for advanced parameter control.
@@ -1796,7 +1803,7 @@ def detect_frame_bounds(
     img_h, img_w = orig_h, orig_w
 
     # Step 1: Detect sprocket holes on full image first
-    sprocket_mask, detected_film_type = detect_sprocket_holes(img, film_type, visualizer)
+    sprocket_mask, detected_sprocket_type = detect_sprocket_holes(img, sprocket_type, visualizer)
     has_sprockets = detect_sprocket_presence(sprocket_mask, visualizer)
 
     if has_sprockets:

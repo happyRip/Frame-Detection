@@ -117,8 +117,15 @@ def add_detect_arguments(parser: argparse.ArgumentParser) -> None:
         "--film-type",
         choices=["auto", "negative", "positive"],
         default="auto",
-        help="Film type: 'negative' (bright sprocket holes), 'positive' (dark sprocket holes), "
+        help="Film type: 'negative' (bright film base), 'positive' (dark film base), "
         "or 'auto' to detect automatically (default: auto)",
+    )
+    parser.add_argument(
+        "--sprocket-type",
+        choices=["auto", "none", "bright", "dark"],
+        default="auto",
+        help="Sprocket hole type: 'auto' to detect automatically (default), "
+        "'none' to skip detection, 'bright' for bright holes, 'dark' for dark holes",
     )
     parser.add_argument(
         "--edge-filter",
@@ -179,7 +186,7 @@ def run_detect(args: argparse.Namespace) -> None:
     from .detection import crop_frame, detect_frame_bounds
     from .exceptions import FrameDetectionError, ImageReadError
     from .filters import EdgeFilter
-    from .models import FilmType, Margins
+    from .models import FilmType, Margins, SprocketType
     from .separation import SeparationMethod
 
     # Determine error output path (used if --output is set)
@@ -211,6 +218,15 @@ def run_detect(args: argparse.Namespace) -> None:
         "positive": FilmType.POSITIVE,
     }
     film_type = film_type_map[args.film_type]
+
+    # Parse sprocket type
+    sprocket_type_map = {
+        "auto": SprocketType.AUTO,
+        "none": SprocketType.NONE,
+        "bright": SprocketType.BRIGHT,
+        "dark": SprocketType.DARK,
+    }
+    sprocket_type = sprocket_type_map[args.sprocket_type]
 
     # Parse edge filter
     edge_filter_map = {
@@ -253,7 +269,7 @@ def run_detect(args: argparse.Namespace) -> None:
             edge_margins=edge_margins,
             ignore_margins=ignore_margins,
             film_base_inset_percent=args.film_base_inset,
-            film_type=film_type,
+            sprocket_type=sprocket_type,
             edge_filter=edge_filter,
             separation_method=separation_method,
             filter_config=filter_config,

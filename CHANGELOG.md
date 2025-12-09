@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- New `--sprocket-type` CLI option to control sprocket hole detection separately from film type:
+  - `none` - skip sprocket detection (medium format, pre-cropped images)
+  - `bright` - expect bright sprocket holes
+  - `dark` - expect dark sprocket holes
+  - `auto` - auto-detect (default)
+- Plugin: New "Sprocket type" setting in Film tab
+
 ## [0.0.8] - 2025-12-09
 
 ### Changed

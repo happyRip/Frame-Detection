@@ -30,6 +30,7 @@ local DEFAULTS = {
 	aspectRatio = "2:3",
 	customAspectRatio = "2:3",
 	filmType = "auto",
+	sprocketType = "auto",
 	cropIn = 1.5,
 	sprocketMargin = 0.1,
 	filmBaseInset = 1.0,
