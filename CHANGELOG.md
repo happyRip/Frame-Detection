@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - Edge Detection and Film Base subtabs
   - Edge filter selection and parameter tuning
   - Separation method selection and parameter tuning
-  - Clickable parameter labels to reset to defaults
+  - Reset buttons (↺) next to parameter labels to restore defaults
   - Generate Preview button for testing filter settings
 - Preview backup flow with `.bak` rotation for preview temp directories
 - Preview now shows filter-relevant debug images (mask, edges, output)

@@ -326,7 +326,7 @@ local function buildFiltersTab(f, props, generatePreview)
 
 						-- Edge filter parameter row 1 (dynamic label with reset)
 						f:row({
-							f:push_button({
+							f:static_text({
 								title = LrView.bind({
 									key = "edgeFilter",
 									transform = function(v)
@@ -338,9 +338,14 @@ local function buildFiltersTab(f, props, generatePreview)
 										end
 									end,
 								}),
-								width = LABEL_WIDTH,
+								width = LABEL_WIDTH - 20,
+								alignment = "right",
+							}),
+							f:push_button({
+								title = "↺",
+								width = 20,
 								action = resetEdgeParam1,
-								tooltip = "Click to reset to default",
+								tooltip = "Reset to default",
 							}),
 							f:slider({
 								value = LrView.bind("edgeParam1"),
@@ -358,7 +363,7 @@ local function buildFiltersTab(f, props, generatePreview)
 
 						-- Edge filter parameter row 2 (only for Canny and DoG)
 						f:row({
-							f:push_button({
+							f:static_text({
 								title = LrView.bind({
 									key = "edgeFilter",
 									transform = function(v)
@@ -368,9 +373,18 @@ local function buildFiltersTab(f, props, generatePreview)
 										end
 									end,
 								}),
-								width = LABEL_WIDTH,
+								width = LABEL_WIDTH - 20,
+								alignment = "right",
+								visible = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v) return v == "canny" or v == "dog" end,
+								}),
+							}),
+							f:push_button({
+								title = "↺",
+								width = 20,
 								action = resetEdgeParam2,
-								tooltip = "Click to reset to default",
+								tooltip = "Reset to default",
 								visible = LrView.bind({
 									key = "edgeFilter",
 									transform = function(v) return v == "canny" or v == "dog" end,
@@ -420,11 +434,16 @@ local function buildFiltersTab(f, props, generatePreview)
 
 						-- Tolerance slider (shared by all methods)
 						f:row({
-							f:push_button({
+							f:static_text({
 								title = "Tolerance",
-								width = LABEL_WIDTH,
+								width = LABEL_WIDTH - 20,
+								alignment = "right",
+							}),
+							f:push_button({
+								title = "↺",
+								width = 20,
 								action = resetTolerance,
-								tooltip = "Click to reset to default",
+								tooltip = "Reset to default",
 							}),
 							f:slider({
 								value = LrView.bind("tolerance"),
@@ -444,7 +463,7 @@ local function buildFiltersTab(f, props, generatePreview)
 
 						-- Separation method parameter row 1 (dynamic label with reset)
 						f:row({
-							f:push_button({
+							f:static_text({
 								title = LrView.bind({
 									key = "separationMethod",
 									transform = function(v)
@@ -455,9 +474,18 @@ local function buildFiltersTab(f, props, generatePreview)
 										end
 									end,
 								}),
-								width = LABEL_WIDTH,
+								width = LABEL_WIDTH - 20,
+								alignment = "right",
+								visible = LrView.bind({
+									key = "separationMethod",
+									transform = function(v) return v == "clahe" or v == "adaptive" or v == "gradient" end,
+								}),
+							}),
+							f:push_button({
+								title = "↺",
+								width = 20,
 								action = resetSepParam1,
-								tooltip = "Click to reset to default",
+								tooltip = "Reset to default",
 								visible = LrView.bind({
 									key = "separationMethod",
 									transform = function(v) return v == "clahe" or v == "adaptive" or v == "gradient" end,
@@ -487,11 +515,17 @@ local function buildFiltersTab(f, props, generatePreview)
 
 						-- Separation method parameter row 2 (only CLAHE has 2nd param)
 						f:row({
-							f:push_button({
+							f:static_text({
 								title = "Tile size",
-								width = LABEL_WIDTH,
+								width = LABEL_WIDTH - 20,
+								alignment = "right",
+								visible = visibleForSeparation("clahe"),
+							}),
+							f:push_button({
+								title = "↺",
+								width = 20,
 								action = resetSepParam2,
-								tooltip = "Click to reset to default",
+								tooltip = "Reset to default",
 								visible = visibleForSeparation("clahe"),
 							}),
 							f:slider({
