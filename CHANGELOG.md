@@ -6,9 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Preview now resets crop before generating when "Reset crop" setting is enabled
+
 ## [0.0.9] - 2025-12-09
 
 ### Added
+
 - New `--sprocket-type` CLI option to control sprocket hole detection separately from film type:
   - `none` - skip sprocket detection (medium format, pre-cropped images)
   - `bright` - expect bright sprocket holes
@@ -17,11 +22,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Plugin: New "Sprocket type" setting in Film tab
 
 ### Fixed
+
 - Plugin: Auto Crop button now correctly uses custom command path setting
 
 ## [0.0.8] - 2025-12-09
 
 ### Changed
+
 - Reorganized plugin settings dialog: new "Film" tab as first tab with film type and auto crop buttons, "Crop" tab now contains only crop-related settings
 - Moved "Restore Defaults" button to bottom left of main dialog window
 - Navigation buttons disabled when single photo selected
@@ -29,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [0.0.7] - 2025-12-09
 
 ### Added
+
 - JSON-based filter configuration via `--filter-config` CLI argument
 - FilterConfig dataclasses for structured parameter management
 - Configurable parameters for all edge detection filters:
@@ -53,33 +61,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `edges`: generates only edge detection visualization
 
 ### Fixed
+
 - Renamed JSON.lua to JsonEncoder.lua to avoid Lightroom reserved name conflict
 
 ## [0.0.6] - 2025-12-09
 
 ### Changed
+
 - CLI now requires explicit `detect` subcommand for frame detection
 
 ## [0.0.4] - 2025-12-09
 
 ### Fixed
+
 - CLI no longer requires OpenCV for `install`/`uninstall` commands (lazy imports)
 
 ### Added
+
 - Auto-discovery of `negative-auto-crop` command from Homebrew locations
 - Configurable command path in plugin Debug settings
 
 ## [0.0.3] - 2025-12-09
 
 ### Changed
+
 - Installation method changed to Homebrew distribution
 - CLI tool and Lightroom plugin now installed separately
 - Keyboard shortcuts managed via `negative-auto-crop install/uninstall shortcuts`
 
 ### Removed
+
 - Bundled Python environment in plugin (now uses system command)
 
 ### Migration
+
 If upgrading from a previous version, uninstall first:
 
 ```bash

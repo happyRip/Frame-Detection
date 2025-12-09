@@ -66,6 +66,21 @@ local function setCrop(photo, angle, cropLeft, cropRight, cropTop, cropBottom)
 	end
 end
 
+local function resetCrops(photos)
+	catalog:withWriteAccessDo("Reset crops", function()
+		for _, photo in ipairs(photos) do
+			photo:applyDevelopSettings({
+				CropLeft = 0,
+				CropRight = 1,
+				CropTop = 0,
+				CropBottom = 1,
+				CropAngle = 0,
+				CropConstrainAspectRatio = false,
+			})
+		end
+	end, { timeout = 10 })
+end
+
 -- Convert a Windows absolute path to a Linux Sub-Sytem path
 local function fixPath(winPath)
 	-- Do nothing on OSX
@@ -248,18 +263,7 @@ local function processPhotos(photos, settings)
 
 	-- Reset crops for all photos if requested (before export starts)
 	if resetCrop then
-		catalog:withWriteAccessDo("Reset crops", function()
-			for _, photo in ipairs(photos) do
-				photo:applyDevelopSettings({
-					CropLeft = 0,
-					CropRight = 1,
-					CropTop = 0,
-					CropBottom = 1,
-					CropAngle = 0,
-					CropConstrainAspectRatio = false,
-				})
-			end
-		end, { timeout = 10 })
+		resetCrops(photos)
 	end
 
 	LrFunctionContext.callWithContext("export", function(exportContext)
@@ -462,4 +466,5 @@ end
 return {
 	processPhotos = processPhotos,
 	setCrop = setCrop,
+	resetCrops = resetCrops,
 }

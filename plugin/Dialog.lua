@@ -1136,6 +1136,11 @@ local function showDialog()
 				local debugDir = LrPathUtils.child(tempDir, "debug")
 				LrFileUtils.createDirectory(debugDir)
 
+				-- Reset crop if requested (before export starts)
+				if props.resetCrop then
+					AutoCrop.resetCrops({ photo })
+				end
+
 				LrFunctionContext.callWithContext("previewExport", function(exportContext)
 					-- Export current photo
 					local progressScope = LrDialogs.showModalProgressDialog({
