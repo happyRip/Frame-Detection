@@ -819,13 +819,52 @@ class DebugVisualizer:
 
         self._save("film_base_mask_cropped", vis)
 
-    def save_edges(self, edges: np.ndarray, frame_bounds: FrameBounds | None = None):
+    def save_edges(
+        self,
+        edges: np.ndarray,
+        frame_bounds: FrameBounds | None = None,
+        img: np.ndarray | None = None,
+    ):
         """Save edge detection result with optional classified line overlay.
 
         Args:
             edges: Edge detection result (grayscale image)
             frame_bounds: Optional FrameBounds with classified lines to overlay
+            img: Optional original image to overlay edges on (for preview mode)
         """
+        # Define colors for classified lines (BGR format)
+        line_colors = {
+            "top": (255, 0, 0),      # Blue
+            "bottom": (255, 128, 0),  # Light blue
+            "left": (0, 0, 255),      # Red
+            "right": (0, 128, 255),   # Orange
+        }
+
+        if img is not None:
+            # Overlay edges on original image (green edges)
+            vis = img.copy()
+            edges_colored = np.zeros_like(vis)
+            edges_colored[edges > 0] = (0, 255, 0)  # Green edges
+            vis = cv2.addWeighted(vis, 0.7, edges_colored, 0.3, 0)
+
+            # Draw classified lines if provided
+            if frame_bounds is not None:
+                for edge_name, color in line_colors.items():
+                    edge_group = getattr(frame_bounds, edge_name)
+                    for line in edge_group.lines:
+                        cv2.line(vis, (line.x1, line.y1), (line.x2, line.y2), color, 4)
+
+                # Add legend
+                y_offset = 40
+                for edge_name, color in line_colors.items():
+                    count = len(getattr(frame_bounds, edge_name).lines)
+                    cv2.putText(vis, f"{edge_name}: {count}", (10, y_offset),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
+                    y_offset += 35
+
+            self._save("edges", vis)
+            return
+
         if frame_bounds is None:
             self._save("edges", edges)
             return
@@ -834,13 +873,7 @@ class DebugVisualizer:
         edges_rgb = cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)
 
         # Draw classified lines with colors
-        colors = {
-            "top": (255, 0, 0),      # Red
-            "bottom": (0, 255, 0),   # Green
-            "left": (0, 0, 255),     # Blue
-            "right": (255, 255, 0),  # Yellow
-        }
-        for edge_name, color in colors.items():
+        for edge_name, color in line_colors.items():
             edge_group = getattr(frame_bounds, edge_name)
             for line in edge_group.lines:
                 cv2.line(edges_rgb, (line.x1, line.y1), (line.x2, line.y2), color, 3)

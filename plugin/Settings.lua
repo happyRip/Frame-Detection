@@ -40,7 +40,7 @@ local DEFAULTS = {
 	debugPath = DEFAULT_DEBUG_PATH,
 	logEnabled = true,
 	logPath = DEFAULT_LOG_PATH,
-	commandPath = nil, -- Auto-discovered
+	commandPath = "", -- Auto-discovered if empty
 
 	-- Edge filter settings
 	edgeFilter = "scharr",
@@ -58,26 +58,39 @@ local DEFAULTS = {
 	claheTileSize = 32,
 	adaptiveBlockSize = 51,
 	gradientWeight = 0.5,
+
+	-- UI state (not persisted)
+	filterSubtab = "separation",
 }
 
 -- Get preferences table
 local prefs = LrPrefs.prefsForPlugin()
 
+-- Keys that should not be persisted (transient UI state)
+local TRANSIENT_KEYS = {
+	filterSubtab = true,
+}
+
 local function load()
 	local settings = {}
 	for key, defaultValue in pairs(DEFAULTS) do
-		local savedValue = prefs[key]
-		if savedValue ~= nil then
-			settings[key] = savedValue
-		else
+		-- Always use default for transient keys
+		if TRANSIENT_KEYS[key] then
 			settings[key] = defaultValue
+		else
+			local savedValue = prefs[key]
+			if savedValue ~= nil then
+				settings[key] = savedValue
+			else
+				settings[key] = defaultValue
+			end
 		end
 	end
 
-	-- Auto-discover command path if not set or invalid
-	if not settings.commandPath or not LrFileUtils.exists(settings.commandPath) then
-		settings.commandPath = findCommandPath()
-		if settings.commandPath then
+	-- Auto-discover command path only if not set (don't override user's saved path)
+	if not settings.commandPath or settings.commandPath == "" then
+		settings.commandPath = findCommandPath() or ""
+		if settings.commandPath ~= "" then
 			prefs.commandPath = settings.commandPath
 		end
 	end
@@ -87,7 +100,9 @@ end
 
 local function save(props)
 	for key, _ in pairs(DEFAULTS) do
-		prefs[key] = props[key]
+		if not TRANSIENT_KEYS[key] then
+			prefs[key] = props[key]
+		end
 	end
 end
 

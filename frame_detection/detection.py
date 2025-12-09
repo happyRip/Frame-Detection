@@ -1748,6 +1748,7 @@ def detect_frame_bounds(
     edge_filter: EdgeFilter = EdgeFilter.CANNY,
     separation_method: SeparationMethod = SeparationMethod.COLOR_DISTANCE,
     filter_config: FilterConfig | None = None,
+    preview_mode: str | None = None,
 ) -> tuple[FrameBounds, list[int]]:
     """Detect frame boundaries in an image.
 
@@ -1765,6 +1766,8 @@ def detect_frame_bounds(
         separation_method: Method to use for separating film base from image
         filter_config: Optional FilterConfig for advanced parameter control.
             If provided, overrides edge_filter and separation_method.
+        preview_mode: Optional preview mode for minimal processing. 'separation' exits
+            after film base mask visualization, 'edges' exits after edge detection.
 
     Returns:
         Tuple of (FrameBounds object, [left, right, top, bottom] positions)
@@ -1916,6 +1919,16 @@ def detect_frame_bounds(
             sprocket_curve1, sprocket_curve2
         )
 
+    # Early exit for separation preview mode
+    if preview_mode == "separation":
+        return (
+            FrameBounds(
+                EdgeGroup([], None), EdgeGroup([], None),
+                EdgeGroup([], None), EdgeGroup([], None)
+            ),
+            [0, img_w, 0, img_h],
+        )
+
     # Step 5: Detect lines from film base mask boundaries (in each margin region)
     # Pass original mask - edges will be masked using curves inside detect_lines
     # Use ratio-aware margins so the inner zone has the correct aspect ratio
@@ -1950,8 +1963,13 @@ def detect_frame_bounds(
     )
 
     if visualizer:
-        visualizer.save_edges(edges, frame_bounds)
+        # Pass img for overlay in preview mode
+        visualizer.save_edges(edges, frame_bounds, img=img if preview_mode == "edges" else None)
         visualizer.save_classified_lines(img, frame_bounds)
+
+    # Early exit for edges preview mode (after classification)
+    if preview_mode == "edges":
+        return (frame_bounds, [0, img_w, 0, img_h])
 
     if not frame_bounds.top.lines and not frame_bounds.bottom.lines:
         if not frame_bounds.left.lines and not frame_bounds.right.lines:

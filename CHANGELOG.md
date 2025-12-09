@@ -20,13 +20,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - Adaptive: block size
   - Gradient: gradient weight
 - New "Filters" tab in Lightroom plugin dialog with:
-  - Edge Detection and Film Base subtabs
+  - Film Base and Edge Detection subtabs
   - Edge filter selection and parameter tuning
   - Separation method selection and parameter tuning
   - Reset buttons (↺) next to parameter labels to restore defaults
-  - Generate Preview button for testing filter settings
+  - Single dynamic preview button that switches between "Preview Film Base" and "Preview Edges" based on selected subtab
 - Preview backup flow with `.bak` rotation for preview temp directories
-- Preview now shows filter-relevant debug images (mask, edges, output)
+- `--preview-mode` CLI argument for minimal preview generation:
+  - `separation`: generates only film base mask visualization
+  - `edges`: generates only edge detection visualization
 
 ### Fixed
 - Renamed JSON.lua to JsonEncoder.lua to avoid Lightroom reserved name conflict

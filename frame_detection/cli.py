@@ -138,6 +138,12 @@ def add_detect_arguments(parser: argparse.ArgumentParser) -> None:
         help="JSON filter configuration (inline JSON string or path to .json file). "
         "Overrides --edge-filter and --separation-method if provided.",
     )
+    parser.add_argument(
+        "--preview-mode",
+        choices=["separation", "edges"],
+        help="Generate minimal preview: 'separation' for film base mask, 'edges' for edge detection. "
+        "Exits early after generating the requested visualization.",
+    )
 
 
 def parse_filter_config(config_arg: str | None):
@@ -234,6 +240,9 @@ def run_detect(args: argparse.Namespace) -> None:
     # Keep a copy of original image for debug visualization
     img_original = img.copy() if visualizer else None
 
+    # Parse preview mode
+    preview_mode = getattr(args, "preview_mode", None)
+
     try:
         frame_bounds, bounds = detect_frame_bounds(
             img,
@@ -248,6 +257,7 @@ def run_detect(args: argparse.Namespace) -> None:
             edge_filter=edge_filter,
             separation_method=separation_method,
             filter_config=filter_config,
+            preview_mode=preview_mode,
         )
     except FrameDetectionError as e:
         write_error(error_output, e.user_message)
@@ -256,6 +266,10 @@ def run_detect(args: argparse.Namespace) -> None:
         msg = f"Unexpected error: {e}"
         write_error(error_output, msg)
         sys.exit(msg)
+
+    # Early exit for preview modes - visualization already saved, no further processing needed
+    if preview_mode:
+        return
 
     left, right, top, bottom = bounds
 

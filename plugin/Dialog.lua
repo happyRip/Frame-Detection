@@ -228,7 +228,7 @@ local function buildCropSettingsTab(f, props, restoreDefaults, runAutoCrop, navi
 	})
 end
 
-local function buildFiltersTab(f, props, generatePreview)
+local function buildFiltersTab(f, props, generatePreview, generateEdgePreview, generateSeparationPreview)
 	-- Helper function for conditional visibility based on edge filter selection
 	local function visibleForFilter(filterValue)
 		return LrView.bind({
@@ -303,117 +303,10 @@ local function buildFiltersTab(f, props, generatePreview)
 			spacing = f:control_spacing(),
 			fill_horizontal = 1,
 
-			-- Subtabs for Edge Detection and Film Base Separation
+			-- Subtabs for Film Base Separation and Edge Detection
 			f:tab_view({
 				fill_horizontal = 1,
-				-- Edge Detection subtab
-				f:tab_view_item({
-					title = "Edge Detection",
-					identifier = "edge",
-					f:column({
-						bind_to_object = props,
-						spacing = f:control_spacing(),
-
-						f:row({
-							f:static_text({ title = "Filter", width = LABEL_WIDTH, alignment = "right" }),
-							f:popup_menu({
-								items = EDGE_FILTERS,
-								value = LrView.bind("edgeFilter"),
-								width = POPUP_WIDTH,
-								tooltip = "Select the edge detection filter. Scharr is recommended for most cases.",
-							}),
-						}),
-
-						-- Edge filter parameter row 1 (dynamic label with reset)
-						f:row({
-							f:static_text({
-								title = LrView.bind({
-									key = "edgeFilter",
-									transform = function(v)
-										if v == "canny" then return "Low threshold"
-										elseif v == "sobel" or v == "scharr" or v == "laplacian" then return "Blur size"
-										elseif v == "dog" then return "Sigma 1"
-										elseif v == "log" then return "Sigma"
-										else return "Parameter 1"
-										end
-									end,
-								}),
-								width = LABEL_WIDTH - 20,
-								alignment = "right",
-							}),
-							f:push_button({
-								title = "↺",
-								width = 20,
-								action = resetEdgeParam1,
-								tooltip = "Reset to default",
-							}),
-							f:slider({
-								value = LrView.bind("edgeParam1"),
-								min = 0,
-								max = 255,
-								width = SLIDER_WIDTH,
-							}),
-							f:edit_field({
-								value = LrView.bind("edgeParam1"),
-								width_in_digits = 5,
-								min = 0,
-								max = 255,
-							}),
-						}),
-
-						-- Edge filter parameter row 2 (only for Canny and DoG)
-						f:row({
-							f:static_text({
-								title = LrView.bind({
-									key = "edgeFilter",
-									transform = function(v)
-										if v == "canny" then return "High threshold"
-										elseif v == "dog" then return "Sigma 2"
-										else return ""
-										end
-									end,
-								}),
-								width = LABEL_WIDTH - 20,
-								alignment = "right",
-								visible = LrView.bind({
-									key = "edgeFilter",
-									transform = function(v) return v == "canny" or v == "dog" end,
-								}),
-							}),
-							f:push_button({
-								title = "↺",
-								width = 20,
-								action = resetEdgeParam2,
-								tooltip = "Reset to default",
-								visible = LrView.bind({
-									key = "edgeFilter",
-									transform = function(v) return v == "canny" or v == "dog" end,
-								}),
-							}),
-							f:slider({
-								value = LrView.bind("edgeParam2"),
-								min = 0,
-								max = 255,
-								width = SLIDER_WIDTH,
-								visible = LrView.bind({
-									key = "edgeFilter",
-									transform = function(v) return v == "canny" or v == "dog" end,
-								}),
-							}),
-							f:edit_field({
-								value = LrView.bind("edgeParam2"),
-								width_in_digits = 5,
-								min = 0,
-								max = 255,
-								visible = LrView.bind({
-									key = "edgeFilter",
-									transform = function(v) return v == "canny" or v == "dog" end,
-								}),
-							}),
-						}),
-					}),
-				}),
-
+				value = LrView.bind("filterSubtab"),
 				-- Film Base Separation subtab
 				f:tab_view_item({
 					title = "Film Base",
@@ -467,10 +360,14 @@ local function buildFiltersTab(f, props, generatePreview)
 								title = LrView.bind({
 									key = "separationMethod",
 									transform = function(v)
-										if v == "clahe" then return "Clip limit"
-										elseif v == "adaptive" then return "Block size"
-										elseif v == "gradient" then return "Gradient weight"
-										else return ""
+										if v == "clahe" then
+											return "Clip limit"
+										elseif v == "adaptive" then
+											return "Block size"
+										elseif v == "gradient" then
+											return "Gradient weight"
+										else
+											return ""
 										end
 									end,
 								}),
@@ -478,7 +375,9 @@ local function buildFiltersTab(f, props, generatePreview)
 								alignment = "right",
 								visible = LrView.bind({
 									key = "separationMethod",
-									transform = function(v) return v == "clahe" or v == "adaptive" or v == "gradient" end,
+									transform = function(v)
+										return v == "clahe" or v == "adaptive" or v == "gradient"
+									end,
 								}),
 							}),
 							f:push_button({
@@ -488,7 +387,9 @@ local function buildFiltersTab(f, props, generatePreview)
 								tooltip = "Reset to default",
 								visible = LrView.bind({
 									key = "separationMethod",
-									transform = function(v) return v == "clahe" or v == "adaptive" or v == "gradient" end,
+									transform = function(v)
+										return v == "clahe" or v == "adaptive" or v == "gradient"
+									end,
 								}),
 							}),
 							f:slider({
@@ -498,7 +399,9 @@ local function buildFiltersTab(f, props, generatePreview)
 								width = SLIDER_WIDTH,
 								visible = LrView.bind({
 									key = "separationMethod",
-									transform = function(v) return v == "clahe" or v == "adaptive" or v == "gradient" end,
+									transform = function(v)
+										return v == "clahe" or v == "adaptive" or v == "gradient"
+									end,
 								}),
 							}),
 							f:edit_field({
@@ -508,7 +411,9 @@ local function buildFiltersTab(f, props, generatePreview)
 								max = 201,
 								visible = LrView.bind({
 									key = "separationMethod",
-									transform = function(v) return v == "clahe" or v == "adaptive" or v == "gradient" end,
+									transform = function(v)
+										return v == "clahe" or v == "adaptive" or v == "gradient"
+									end,
 								}),
 							}),
 						}),
@@ -546,20 +451,161 @@ local function buildFiltersTab(f, props, generatePreview)
 						}),
 					}),
 				}),
+
+				-- Edge Detection subtab
+				f:tab_view_item({
+					title = "Edge Detection",
+					identifier = "edge",
+					f:column({
+						bind_to_object = props,
+						spacing = f:control_spacing(),
+
+						f:row({
+							f:static_text({ title = "Filter", width = LABEL_WIDTH, alignment = "right" }),
+							f:popup_menu({
+								items = EDGE_FILTERS,
+								value = LrView.bind("edgeFilter"),
+								width = POPUP_WIDTH,
+								tooltip = "Select the edge detection filter. Scharr is recommended for most cases.",
+							}),
+						}),
+
+						-- Edge filter parameter row 1 (dynamic label with reset)
+						f:row({
+							f:static_text({
+								title = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v)
+										if v == "canny" then
+											return "Low threshold"
+										elseif v == "sobel" or v == "scharr" or v == "laplacian" then
+											return "Blur size"
+										elseif v == "dog" then
+											return "Sigma 1"
+										elseif v == "log" then
+											return "Sigma"
+										else
+											return "Parameter 1"
+										end
+									end,
+								}),
+								width = LABEL_WIDTH - 20,
+								alignment = "right",
+							}),
+							f:push_button({
+								title = "↺",
+								width = 20,
+								action = resetEdgeParam1,
+								tooltip = "Reset to default",
+							}),
+							f:slider({
+								value = LrView.bind("edgeParam1"),
+								min = 0,
+								max = 255,
+								width = SLIDER_WIDTH,
+							}),
+							f:edit_field({
+								value = LrView.bind("edgeParam1"),
+								width_in_digits = 5,
+								min = 0,
+								max = 255,
+							}),
+						}),
+
+						-- Edge filter parameter row 2 (only for Canny and DoG)
+						f:row({
+							f:static_text({
+								title = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v)
+										if v == "canny" then
+											return "High threshold"
+										elseif v == "dog" then
+											return "Sigma 2"
+										else
+											return ""
+										end
+									end,
+								}),
+								width = LABEL_WIDTH - 20,
+								alignment = "right",
+								visible = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v)
+										return v == "canny" or v == "dog"
+									end,
+								}),
+							}),
+							f:push_button({
+								title = "↺",
+								width = 20,
+								action = resetEdgeParam2,
+								tooltip = "Reset to default",
+								visible = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v)
+										return v == "canny" or v == "dog"
+									end,
+								}),
+							}),
+							f:slider({
+								value = LrView.bind("edgeParam2"),
+								min = 0,
+								max = 255,
+								width = SLIDER_WIDTH,
+								visible = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v)
+										return v == "canny" or v == "dog"
+									end,
+								}),
+							}),
+							f:edit_field({
+								value = LrView.bind("edgeParam2"),
+								width_in_digits = 5,
+								min = 0,
+								max = 255,
+								visible = LrView.bind({
+									key = "edgeFilter",
+									transform = function(v)
+										return v == "canny" or v == "dog"
+									end,
+								}),
+							}),
+						}),
+					}),
+				}),
 			}),
 
-			f:spacer({ height = 10 }),
-
-			-- Preview Section (outside subtabs)
 			f:row({
 				f:push_button({
-					title = "Generate Preview",
-					action = generatePreview,
-					tooltip = "Generate a preview using current filter settings on the selected photo.",
-				}),
-				f:static_text({
-					title = "Opens debug visualization in default viewer",
-					font = "<system/small>",
+					title = LrView.bind({
+						key = "filterSubtab",
+						transform = function(v)
+							if v == "separation" then
+								return "Preview Film Base"
+							else
+								return "Preview Edges"
+							end
+						end,
+					}),
+					action = function()
+						if props.filterSubtab == "separation" then
+							generateSeparationPreview()
+						else
+							generateEdgePreview()
+						end
+					end,
+					tooltip = LrView.bind({
+						key = "filterSubtab",
+						transform = function(v)
+							if v == "separation" then
+								return "Generate film base separation preview"
+							else
+								return "Generate edge detection preview"
+							end
+						end,
+					}),
 				}),
 			}),
 		}),
@@ -574,6 +620,20 @@ local function buildDebugTab(f, props)
 				canChooseFiles = false,
 				canChooseDirectories = true,
 				canCreateDirectories = true,
+				allowsMultipleSelection = false,
+			})
+			if result and #result > 0 then
+				props[propName] = result[1]
+			end
+		end
+	end
+
+	local function chooseFile(title, propName)
+		return function()
+			local result = LrDialogs.runOpenPanel({
+				title = title,
+				canChooseFiles = true,
+				canChooseDirectories = false,
 				allowsMultipleSelection = false,
 			})
 			if result and #result > 0 then
@@ -704,12 +764,33 @@ local function buildDebugTab(f, props)
 			f:row({
 				f:edit_field({
 					value = LrView.bind("commandPath"),
-					width = PATH_WIDTH,
+					width = PATH_WIDTH - 80,
 					tooltip = "Path to the negative-auto-crop command (auto-discovered from Homebrew).",
 				}),
 				f:push_button({
 					title = "Browse...",
-					action = chooseFolder("Select negative-auto-crop executable", "commandPath"),
+					action = chooseFile("Select negative-auto-crop executable", "commandPath"),
+				}),
+				f:push_button({
+					title = "Auto-detect",
+					action = function()
+						local paths = {
+							"/opt/homebrew/bin/negative-auto-crop",
+							"/usr/local/bin/negative-auto-crop",
+						}
+						for _, path in ipairs(paths) do
+							if LrFileUtils.exists(path) then
+								props.commandPath = path
+								return
+							end
+						end
+						LrDialogs.message(
+							"Not found",
+							"Could not find negative-auto-crop in Homebrew locations.",
+							"info"
+						)
+					end,
+					tooltip = "Auto-detect from Homebrew installation",
 				}),
 			}),
 
@@ -921,7 +1002,8 @@ local function showDialog()
 		end
 
 		-- Generate preview with current filter settings
-		local function generatePreview()
+		-- previewType: "edges" for edge detection preview, "separation" for film base mask preview
+		local function generatePreview(previewType)
 			LrTasks.startAsyncTask(function()
 				local catalog = LrApplication.activeCatalog()
 				local photo = catalog:getTargetPhoto()
@@ -955,7 +1037,11 @@ local function showDialog()
 				if props.edgeFilter == "canny" then
 					filterConfig.edge_filter.low_threshold = props.cannyLow
 					filterConfig.edge_filter.high_threshold = props.cannyHigh
-				elseif props.edgeFilter == "sobel" or props.edgeFilter == "scharr" or props.edgeFilter == "laplacian" then
+				elseif
+					props.edgeFilter == "sobel"
+					or props.edgeFilter == "scharr"
+					or props.edgeFilter == "laplacian"
+				then
 					filterConfig.edge_filter.blur_size = props.blurSize
 				elseif props.edgeFilter == "dog" then
 					filterConfig.edge_filter.sigma1 = props.dogSigma1
@@ -987,14 +1073,14 @@ local function showDialog()
 				local debugDir = LrPathUtils.child(tempDir, "debug")
 				LrFileUtils.createDirectory(debugDir)
 
-				-- Export current photo
-				local progressScope = LrDialogs.showModalProgressDialog({
-					title = "Generating Preview",
-					caption = "Exporting photo...",
-					cannotCancel = true,
-				})
-
 				LrFunctionContext.callWithContext("previewExport", function(exportContext)
+					-- Export current photo
+					local progressScope = LrDialogs.showModalProgressDialog({
+						title = "Generating Preview",
+						caption = "Exporting photo...",
+						cannotCancel = true,
+						functionContext = exportContext,
+					})
 					local exportSession = LrExportSession({
 						photosToExport = { photo },
 						exportSettings = {
@@ -1024,78 +1110,96 @@ local function showDialog()
 						rendition:waitForRender()
 						previewImagePath = rendition.destinationPath
 					end
+
+					progressScope:setCaption("Running detection...")
+
+					-- Write config to temp file (more reliable than escaping inline JSON)
+					local configPath = LrPathUtils.child(tempDir, "filter_config.json")
+					local configFile = io.open(configPath, "w")
+					if configFile then
+						configFile:write(configJson)
+						configFile:close()
+					end
+
+					-- Build command with --debug-dir for visualization
+					local cmd = '"'
+						.. props.commandPath
+						.. '" detect "'
+						.. previewImagePath
+						.. '" --debug-dir "'
+						.. debugDir
+						.. '" --filter-config "'
+						.. configPath
+						.. '" --preview-mode '
+						.. previewType
+						.. " --ratio "
+						.. (props.aspectRatio == "custom" and props.customAspectRatio or props.aspectRatio)
+						.. " --film-type "
+						.. props.filmType
+
+					local exitCode = LrTasks.execute(cmd)
+					progressScope:done()
+
+					if exitCode ~= 0 then
+						-- Check for error file
+						local errorPath = previewImagePath .. ".txt.err"
+						local errorMsg = "Detection failed (exit code: " .. exitCode .. ")\n\nCommand: " .. cmd
+						if LrFileUtils.exists(errorPath) then
+							local content = LrFileUtils.readFile(errorPath)
+							if content then
+								errorMsg = content:gsub("^%s*(.-)%s*$", "%1")
+							end
+						end
+						LrDialogs.message("Preview Error", errorMsg, "critical")
+						return
+					end
+
+					-- Finalize preview directory (moves temp to final location)
+					Paths.finalizePreview(tempDir)
+
+					-- Find relevant debug images based on preview type (search in final location)
+					local finalDebugDir = LrPathUtils.child(Paths.preview, "debug")
+					local relevantImages = {}
+					for file in LrFileUtils.files(finalDebugDir) do
+						if file:match("%.png$") or file:match("%.jpg$") then
+							local filename = LrPathUtils.leafName(file)
+							if previewType == "edges" then
+								-- Show only edges visualization
+								if filename:match("edges") then
+									table.insert(relevantImages, file)
+								end
+							elseif previewType == "separation" then
+								-- Show only film base mask visualization
+								if filename:match("mask") then
+									table.insert(relevantImages, file)
+								end
+							end
+						end
+					end
+
+					if #relevantImages > 0 then
+						-- Open all relevant images
+						LrShell.openFilesInApp(relevantImages, "open")
+					else
+						LrDialogs.message("Preview", "Detection completed but no debug images were generated.", "info")
+					end
 				end)
-
-				progressScope:setCaption("Running detection...")
-
-				-- Write config to temp file (more reliable than escaping inline JSON)
-				local configPath = LrPathUtils.child(tempDir, "filter_config.json")
-				local configFile = io.open(configPath, "w")
-				if configFile then
-					configFile:write(configJson)
-					configFile:close()
-				end
-
-				-- Build command with --debug-dir for visualization
-				local cmd = '"'
-					.. props.commandPath
-					.. '" detect "'
-					.. previewImagePath
-					.. '" --debug-dir "'
-					.. debugDir
-					.. '" --filter-config "'
-					.. configPath
-					.. '" --ratio '
-					.. (props.aspectRatio == "custom" and props.customAspectRatio or props.aspectRatio)
-					.. " --film-type "
-					.. props.filmType
-
-				local exitCode = LrTasks.execute(cmd)
-				progressScope:done()
-
-				if exitCode ~= 0 then
-					-- Check for error file
-					local errorPath = previewImagePath .. ".txt.err"
-					local errorMsg = "Detection failed (exit code: " .. exitCode .. ")"
-					if LrFileUtils.exists(errorPath) then
-						local content = LrFileUtils.readFile(errorPath)
-						if content then
-							errorMsg = content:gsub("^%s*(.-)%s*$", "%1")
-						end
-					end
-					LrDialogs.message("Preview Error", errorMsg, "critical")
-					return
-				end
-
-				-- Find filter-relevant debug images
-				-- Pattern matching for debug image filenames (numbered prefixes)
-				local relevantImages = {}
-				for file in LrFileUtils.files(debugDir) do
-					if file:match("%.png$") or file:match("%.jpg$") then
-						local filename = LrPathUtils.leafName(file)
-						-- Include film mask (separation) and edges (edge filter) visualizations
-						if filename:match("mask") or filename:match("edges") or filename:match("output") then
-							table.insert(relevantImages, file)
-						end
-					end
-				end
-
-				-- Finalize preview directory
-				Paths.finalizePreview(tempDir)
-
-				if #relevantImages > 0 then
-					-- Open all relevant images
-					LrShell.openFilesInApp(relevantImages, "open")
-				else
-					LrDialogs.message("Preview", "Detection completed but no debug images were generated.", "info")
-				end
 			end)
+		end
+
+		-- Wrapper functions for specific preview types
+		local function generateEdgePreview()
+			generatePreview("edges")
+		end
+
+		local function generateSeparationPreview()
+			generatePreview("separation")
 		end
 
 		-- Build UI
 		local contents = f:tab_view({
 			buildCropSettingsTab(f, props, restoreDefaults, runAutoCrop, navigatePrev, navigateNext),
-			buildFiltersTab(f, props, generatePreview),
+			buildFiltersTab(f, props, generatePreview, generateEdgePreview, generateSeparationPreview),
 			buildDebugTab(f, props),
 			buildAboutTab(f),
 		})
