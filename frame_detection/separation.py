@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 import cv2
 import numpy as np
@@ -294,6 +295,7 @@ def apply_separation(
     film_base_color: np.ndarray,
     method: SeparationMethod,
     tolerance: int = 30,
+    params: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """Apply the specified separation method.
 
@@ -302,11 +304,19 @@ def apply_separation(
         film_base_color: BGR color of the film base
         method: Which separation method to use
         tolerance: Color distance tolerance for matching
+        params: Optional dict of method-specific parameters. If None, uses defaults.
+            - clahe: clip_limit (float), tile_size (int)
+            - adaptive: block_size (int)
+            - gradient: gradient_weight (float)
 
     Returns:
         Binary mask where film base regions are 255
     """
     fn = _SEPARATION_FUNCTIONS[method]
+    if params:
+        # Filter out tolerance from params if present (it's passed separately)
+        method_params = {k: v for k, v in params.items() if k != "tolerance"}
+        return fn(img, film_base_color, tolerance, **method_params)
     return fn(img, film_base_color, tolerance)
 
 

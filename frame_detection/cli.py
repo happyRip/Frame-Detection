@@ -133,6 +133,37 @@ def add_detect_arguments(parser: argparse.ArgumentParser) -> None:
         help="Film base separation method: color_distance (default), clahe, lab_distance, "
         "hsv_distance, adaptive, or gradient",
     )
+    parser.add_argument(
+        "--filter-config",
+        help="JSON filter configuration (inline JSON string or path to .json file). "
+        "Overrides --edge-filter and --separation-method if provided.",
+    )
+
+
+def parse_filter_config(config_arg: str | None):
+    """Parse filter config from CLI argument.
+
+    Args:
+        config_arg: Either inline JSON string or path to .json file
+
+    Returns:
+        FilterConfig object or None if not provided
+    """
+    if not config_arg:
+        return None
+
+    from .models import FilterConfig
+
+    # Check if it looks like a file path
+    config_path = Path(config_arg)
+    if config_path.exists() and config_path.suffix == ".json":
+        return FilterConfig.from_file(config_path)
+
+    # Try parsing as inline JSON
+    try:
+        return FilterConfig.from_json(config_arg)
+    except Exception as e:
+        raise ValueError(f"Invalid --filter-config: {e}")
 
 
 def run_detect(args: argparse.Namespace) -> None:
@@ -197,6 +228,9 @@ def run_detect(args: argparse.Namespace) -> None:
     }
     separation_method = separation_method_map[args.separation_method]
 
+    # Parse filter config (overrides edge_filter and separation_method if provided)
+    filter_config = parse_filter_config(getattr(args, "filter_config", None))
+
     # Keep a copy of original image for debug visualization
     img_original = img.copy() if visualizer else None
 
@@ -213,6 +247,7 @@ def run_detect(args: argparse.Namespace) -> None:
             film_type=film_type,
             edge_filter=edge_filter,
             separation_method=separation_method,
+            filter_config=filter_config,
         )
     except FrameDetectionError as e:
         write_error(error_output, e.user_message)

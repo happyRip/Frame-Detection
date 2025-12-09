@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
 import numpy as np
 
@@ -244,3 +246,237 @@ class FrameBounds:
             self.left.lines,
             self.right.lines,
         ])
+
+
+# =============================================================================
+# Filter Configuration Classes
+# =============================================================================
+
+
+@dataclass
+class CannyParams:
+    """Parameters for Canny edge detection."""
+
+    low: int = 50
+    high: int = 150
+
+    def validate(self) -> None:
+        """Validate parameter ranges."""
+        if not (0 <= self.low <= 255):
+            raise ValueError(f"canny.low must be 0-255, got {self.low}")
+        if not (0 <= self.high <= 255):
+            raise ValueError(f"canny.high must be 0-255, got {self.high}")
+        if self.low >= self.high:
+            raise ValueError(f"canny.low ({self.low}) must be < canny.high ({self.high})")
+
+
+@dataclass
+class BlurParams:
+    """Parameters for filters using Gaussian blur (Sobel, Scharr, Laplacian)."""
+
+    blur_size: int = 5
+
+    def validate(self) -> None:
+        """Validate parameter ranges."""
+        if not (0 <= self.blur_size <= 21):
+            raise ValueError(f"blur_size must be 0-21, got {self.blur_size}")
+        if self.blur_size > 0 and self.blur_size % 2 == 0:
+            raise ValueError(f"blur_size must be 0 or odd, got {self.blur_size}")
+
+
+@dataclass
+class DoGParams:
+    """Parameters for Difference of Gaussians filter."""
+
+    sigma1: float = 1.0
+    sigma2: float = 2.0
+
+    def validate(self) -> None:
+        """Validate parameter ranges."""
+        if not (0.1 <= self.sigma1 <= 5.0):
+            raise ValueError(f"dog.sigma1 must be 0.1-5.0, got {self.sigma1}")
+        if not (0.1 <= self.sigma2 <= 10.0):
+            raise ValueError(f"dog.sigma2 must be 0.1-10.0, got {self.sigma2}")
+
+
+@dataclass
+class LoGParams:
+    """Parameters for Laplacian of Gaussian filter."""
+
+    sigma: float = 2.0
+
+    def validate(self) -> None:
+        """Validate parameter ranges."""
+        if not (0.1 <= self.sigma <= 5.0):
+            raise ValueError(f"log.sigma must be 0.1-5.0, got {self.sigma}")
+
+
+@dataclass
+class EdgeFilterConfig:
+    """Configuration for edge detection filters."""
+
+    method: str = "scharr"
+    canny: CannyParams = field(default_factory=CannyParams)
+    sobel: BlurParams = field(default_factory=BlurParams)
+    scharr: BlurParams = field(default_factory=BlurParams)
+    laplacian: BlurParams = field(default_factory=BlurParams)
+    dog: DoGParams = field(default_factory=DoGParams)
+    log: LoGParams = field(default_factory=LoGParams)
+
+    def validate(self) -> None:
+        """Validate the configuration."""
+        valid_methods = {"canny", "sobel", "scharr", "dog", "laplacian", "log"}
+        if self.method not in valid_methods:
+            raise ValueError(f"edge_filter.method must be one of {valid_methods}")
+        # Validate the selected method's params
+        getattr(self, self.method).validate()
+
+    def get_params(self) -> dict[str, Any]:
+        """Get parameters for the selected method."""
+        return asdict(getattr(self, self.method))
+
+
+@dataclass
+class ClaheParams:
+    """Parameters for CLAHE separation method."""
+
+    clip_limit: float = 1.0
+    tile_size: int = 32
+
+    def validate(self) -> None:
+        """Validate parameter ranges."""
+        if not (0.1 <= self.clip_limit <= 10.0):
+            raise ValueError(f"clahe.clip_limit must be 0.1-10.0, got {self.clip_limit}")
+        if not (8 <= self.tile_size <= 128):
+            raise ValueError(f"clahe.tile_size must be 8-128, got {self.tile_size}")
+
+
+@dataclass
+class AdaptiveParams:
+    """Parameters for adaptive separation method."""
+
+    block_size: int = 51
+
+    def validate(self) -> None:
+        """Validate parameter ranges."""
+        if not (11 <= self.block_size <= 201):
+            raise ValueError(f"adaptive.block_size must be 11-201, got {self.block_size}")
+        if self.block_size % 2 == 0:
+            raise ValueError(f"adaptive.block_size must be odd, got {self.block_size}")
+
+
+@dataclass
+class GradientSepParams:
+    """Parameters for gradient separation method."""
+
+    gradient_weight: float = 0.5
+
+    def validate(self) -> None:
+        """Validate parameter ranges."""
+        if not (0.0 <= self.gradient_weight <= 1.0):
+            raise ValueError(
+                f"gradient.gradient_weight must be 0.0-1.0, got {self.gradient_weight}"
+            )
+
+
+@dataclass
+class SeparationConfig:
+    """Configuration for film base separation methods."""
+
+    method: str = "color_distance"
+    tolerance: int = 30
+    clahe: ClaheParams = field(default_factory=ClaheParams)
+    adaptive: AdaptiveParams = field(default_factory=AdaptiveParams)
+    gradient: GradientSepParams = field(default_factory=GradientSepParams)
+
+    def validate(self) -> None:
+        """Validate the configuration."""
+        valid_methods = {
+            "color_distance",
+            "clahe",
+            "lab_distance",
+            "hsv_distance",
+            "adaptive",
+            "gradient",
+        }
+        if self.method not in valid_methods:
+            raise ValueError(f"separation.method must be one of {valid_methods}")
+        if not (0 <= self.tolerance <= 255):
+            raise ValueError(f"separation.tolerance must be 0-255, got {self.tolerance}")
+        # Validate method-specific params if applicable
+        if self.method in ("clahe", "adaptive", "gradient"):
+            getattr(self, self.method).validate()
+
+    def get_params(self) -> dict[str, Any]:
+        """Get parameters for the selected method, including tolerance."""
+        params: dict[str, Any] = {"tolerance": self.tolerance}
+        if self.method in ("clahe", "adaptive", "gradient"):
+            params.update(asdict(getattr(self, self.method)))
+        return params
+
+
+@dataclass
+class FilterConfig:
+    """Complete filter configuration for frame detection."""
+
+    edge_filter: EdgeFilterConfig = field(default_factory=EdgeFilterConfig)
+    separation: SeparationConfig = field(default_factory=SeparationConfig)
+
+    def validate(self) -> None:
+        """Validate all configuration."""
+        self.edge_filter.validate()
+        self.separation.validate()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return asdict(self)
+
+    def to_json(self, indent: int = 2) -> str:
+        """Convert to JSON string."""
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FilterConfig:
+        """Create FilterConfig from dictionary."""
+        config = cls()
+
+        if "edge_filter" in data:
+            ef = data["edge_filter"]
+            if "method" in ef:
+                config.edge_filter.method = ef["method"]
+            for method in ["canny", "sobel", "scharr", "laplacian", "dog", "log"]:
+                if method in ef:
+                    for key, value in ef[method].items():
+                        setattr(getattr(config.edge_filter, method), key, value)
+
+        if "separation" in data:
+            sep = data["separation"]
+            if "method" in sep:
+                config.separation.method = sep["method"]
+            if "tolerance" in sep:
+                config.separation.tolerance = sep["tolerance"]
+            for method in ["clahe", "adaptive", "gradient"]:
+                if method in sep:
+                    for key, value in sep[method].items():
+                        setattr(getattr(config.separation, method), key, value)
+
+        config.validate()
+        return config
+
+    @classmethod
+    def from_json(cls, json_str: str) -> FilterConfig:
+        """Parse FilterConfig from JSON string."""
+        data = json.loads(json_str)
+        return cls.from_dict(data)
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> FilterConfig:
+        """Load FilterConfig from JSON file."""
+        with open(path) as f:
+            return cls.from_json(f.read())
+
+    @classmethod
+    def default_json(cls) -> str:
+        """Return default configuration as formatted JSON string."""
+        config = cls()
+        return config.to_json()

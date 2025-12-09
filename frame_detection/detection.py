@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np
@@ -14,7 +14,16 @@ from .exceptions import (
     NoLinesDetectedError,
 )
 from .filters import EdgeFilter, apply_filter
-from .models import EdgeGroup, FilmCutEnd, FilmType, FrameBounds, Line, Margins, Orientation
+from .models import (
+    EdgeGroup,
+    FilmCutEnd,
+    FilmType,
+    FilterConfig,
+    FrameBounds,
+    Line,
+    Margins,
+    Orientation,
+)
 from .separation import SeparationMethod, apply_separation
 
 if TYPE_CHECKING:
@@ -1217,6 +1226,7 @@ def create_film_base_mask(
     tolerance: int = 30,
     visualizer: DebugVisualizer | None = None,
     separation_method: SeparationMethod = SeparationMethod.COLOR_DISTANCE,
+    separation_params: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """Create a mask of pixels that match the film base color.
 
@@ -1226,12 +1236,15 @@ def create_film_base_mask(
         tolerance: Color distance tolerance for matching
         visualizer: Optional debug visualizer
         separation_method: Method to use for separating film base from image
+        separation_params: Optional dict of method-specific parameters
 
     Returns:
         Binary mask where film base regions are 255
     """
     # Apply selected separation method
-    film_base_mask = apply_separation(img, film_base_color, separation_method, tolerance)
+    film_base_mask = apply_separation(
+        img, film_base_color, separation_method, tolerance, separation_params
+    )
 
     # Clean up with morphological operations
     kernel_size = max(3, int(min(img.shape[:2]) / 100) | 1)
@@ -1342,6 +1355,7 @@ def detect_lines(
     edge_filter: EdgeFilter = EdgeFilter.CANNY,
     cut_end: FilmCutEnd | None = None,
     sprocket_margin_percent: float = 0.0,
+    edge_filter_params: dict[str, Any] | None = None,
 ) -> tuple[list[Line], np.ndarray]:
     """Detect lines from film base mask boundaries using Hough transform.
 
@@ -1370,6 +1384,7 @@ def detect_lines(
         edge_filter: Edge detection filter method to use
         cut_end: Detected film cut ends to mask from edges
         sprocket_margin_percent: Additional percentage to mask beyond sprocket curves
+        edge_filter_params: Optional dict of filter-specific parameters
 
     Returns:
         Tuple of (list of detected Line objects, edges image)
@@ -1377,7 +1392,7 @@ def detect_lines(
     img_h, img_w = img.shape[:2]
 
     # Find edges of the film base mask (boundaries between frame and base)
-    edges = apply_filter(film_base_mask, edge_filter)
+    edges = apply_filter(film_base_mask, edge_filter, edge_filter_params)
 
     # Mask out sprocket regions from edges using curves
     if curve1 is not None or curve2 is not None:
@@ -1732,6 +1747,7 @@ def detect_frame_bounds(
     film_type: FilmType = FilmType.AUTO,
     edge_filter: EdgeFilter = EdgeFilter.CANNY,
     separation_method: SeparationMethod = SeparationMethod.COLOR_DISTANCE,
+    filter_config: FilterConfig | None = None,
 ) -> tuple[FrameBounds, list[int]]:
     """Detect frame boundaries in an image.
 
@@ -1747,6 +1763,8 @@ def detect_frame_bounds(
         film_type: Type of film (NEGATIVE, POSITIVE, or AUTO for auto-detection)
         edge_filter: Edge detection filter method to use
         separation_method: Method to use for separating film base from image
+        filter_config: Optional FilterConfig for advanced parameter control.
+            If provided, overrides edge_filter and separation_method.
 
     Returns:
         Tuple of (FrameBounds object, [left, right, top, bottom] positions)
@@ -1754,6 +1772,18 @@ def detect_frame_bounds(
     Raises:
         ValueError: If no lines or frame edges are detected, or invalid bounds
     """
+    # If filter_config provided, extract settings from it
+    if filter_config is not None:
+        edge_filter = EdgeFilter(filter_config.edge_filter.method)
+        separation_method = SeparationMethod(filter_config.separation.method)
+        edge_filter_params = filter_config.edge_filter.get_params()
+        separation_params = filter_config.separation.get_params()
+        # Extract tolerance from separation params
+        tolerance = separation_params.pop("tolerance", 30)
+    else:
+        edge_filter_params = None
+        separation_params = None
+        tolerance = 30
     if edge_margins is None:
         edge_margins = Margins(0.3, 0.3, 0.3, 0.3)
     if ignore_margins is None:
@@ -1868,7 +1898,12 @@ def detect_frame_bounds(
 
     # Step 4: Create mask of film base regions
     film_base_mask = create_film_base_mask(
-        img, film_base_color, visualizer=visualizer, separation_method=separation_method
+        img,
+        film_base_color,
+        tolerance=tolerance,
+        visualizer=visualizer,
+        separation_method=separation_method,
+        separation_params=separation_params,
     )
 
     if visualizer:
@@ -1888,7 +1923,7 @@ def detect_frame_bounds(
         img, film_base_mask, edge_margins, orientation,
         sprocket_curve1, sprocket_curve2, aspect_ratio,
         y_min, y_max, x_min, x_max, visualizer, edge_filter,
-        cut_end, sprocket_margin_percent,
+        cut_end, sprocket_margin_percent, edge_filter_params,
     )
 
     if visualizer:

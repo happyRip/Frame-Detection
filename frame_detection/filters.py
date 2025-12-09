@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 import cv2
 import numpy as np
@@ -198,17 +199,28 @@ _FILTER_FUNCTIONS = {
 }
 
 
-def apply_filter(mask: np.ndarray, edge_filter: EdgeFilter) -> np.ndarray:
+def apply_filter(
+    mask: np.ndarray,
+    edge_filter: EdgeFilter,
+    params: dict[str, Any] | None = None,
+) -> np.ndarray:
     """Apply the specified edge detection filter.
 
     Args:
         mask: Input grayscale image or binary mask
         edge_filter: Which filter method to use
+        params: Optional dict of parameters for the filter. If None, uses defaults.
+            - canny: low (int), high (int)
+            - sobel/scharr/laplacian: blur_size (int)
+            - dog: sigma1 (float), sigma2 (float)
+            - log: sigma (float)
 
     Returns:
         Binary edge map (0 or 255)
     """
     filter_fn = _FILTER_FUNCTIONS[edge_filter]
+    if params:
+        return filter_fn(mask, **params)
     return filter_fn(mask)
 
 
