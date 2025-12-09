@@ -127,8 +127,15 @@ echo "Updated frame_detection/__init__.py"
 sed -i '' "s/^## \[Unreleased\]/## [Unreleased]\n\n## [$VERSION] - $DATE/" CHANGELOG.md
 echo "Updated CHANGELOG.md"
 
+# Update plugin/Info.lua VERSION table
+IFS='.' read -r V_MAJOR V_MINOR V_PATCH <<< "$VERSION"
+sed -i '' "s/major = [0-9]*/major = $V_MAJOR/" plugin/Info.lua
+sed -i '' "s/minor = [0-9]*/minor = $V_MINOR/" plugin/Info.lua
+sed -i '' "s/revision = [0-9]*/revision = $V_PATCH/" plugin/Info.lua
+echo "Updated plugin/Info.lua"
+
 # Commit changes
-git add pyproject.toml frame_detection/__init__.py CHANGELOG.md
+git add pyproject.toml frame_detection/__init__.py CHANGELOG.md plugin/Info.lua
 git commit -m "Release v$VERSION"
 echo "Committed changes"
 
