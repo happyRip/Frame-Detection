@@ -2,18 +2,11 @@
 init:
 	@echo "Creating virtualenv..."
 	@python3 -m venv venv
-	@echo "Installing Python dependencies..."
-	@./venv/bin/pip install -q -r requirements.txt
+	@echo "Installing package in editable mode..."
+	@./venv/bin/pip install -q -e .
 	@echo ""
 	@echo "Virtualenv created. Activate with: source venv/bin/activate"
-
-.PHONY: install
-install:
-	@python3 installer.py install
-
-.PHONY: uninstall
-uninstall:
-	@python3 installer.py uninstall
+	@echo "The 'negative-auto-crop' command is now available in the venv."
 
 .PHONY: clean
 clean:

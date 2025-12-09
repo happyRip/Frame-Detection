@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "frame_detection"
+name = "negative-auto-crop"
 version = "0.1.0"
-description = "Film frame detection and cropping"
+description = "Film negative frame detection and auto-cropping"
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
@@ -15,10 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-negative-auto-crop = "installer:main"
+negative-auto-crop = "frame_detection.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["frame_detection*"]
-
-[tool.setuptools]
-py-modules = ["installer"]

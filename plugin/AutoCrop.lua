@@ -34,20 +34,8 @@ end
 -- Enable logging by default
 configureLogging(true, _PLUGIN.path)
 
--- Python environment paths
-local venvPath = LrPathUtils.child(_PLUGIN.path, "venv")
-local pythonPath = LrPathUtils.child(LrPathUtils.child(venvPath, "bin"), "python")
-
--- Path to frame_detection package
-local frameDetectionPath = LrPathUtils.child(_PLUGIN.path, "frame_detection")
-
--- Template string to run Python scripts
--- Run the frame_detection package directly (invokes __main__.py)
-local pythonCommand = '"' .. pythonPath .. '" "' .. frameDetectionPath .. '" __ARGS__'
-if WIN_ENV then
-	-- Run Python through the Linux sub-system on Windows
-	pythonCommand = "bash -c 'DISPLAY=:0 python \"" .. frameDetectionPath .. "\" __ARGS__'"
-end
+-- System command (installed via Homebrew)
+local commandTemplate = "negative-auto-crop __ARGS__"
 
 -- Initialize paths on module load
 LrTasks.startAsyncTask(function()
@@ -294,7 +282,7 @@ local function processPhotos(photos, settings)
 				args = args .. " --debug-dir " .. '"' .. fixPath(debugOutputPath) .. '"'
 			end
 
-			local cmd = pythonCommand:gsub("__ARGS__", args)
+			local cmd = commandTemplate:gsub("__ARGS__", args)
 			log:trace("Executing: " .. cmd)
 
 			local exitCode = LrTasks.execute(cmd)

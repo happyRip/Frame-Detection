@@ -4,14 +4,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import cv2
-
-from .detection import crop_frame, detect_frame_bounds
-from .exceptions import FrameDetectionError, ImageReadError
-from .filters import EdgeFilter
-from .models import FilmType, Margins
-from .separation import SeparationMethod
-
 DEFAULT_DELIM = "_"
 
 
@@ -61,8 +53,8 @@ def build_output_filename(input_path: str, prefix: str, suffix: str, delim: str)
     return str(p.with_stem(delim.join(parts)))
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Detect and crop frame from image")
+def add_detect_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add frame detection arguments to a parser."""
     parser.add_argument("input", help="Input image file")
     parser.add_argument("-o", "--output", help="Output filename")
     parser.add_argument("--prefix", default="", help="Prefix for output filename")
@@ -141,11 +133,17 @@ def parse_args():
         help="Film base separation method: color_distance (default), clahe, lab_distance, "
         "hsv_distance, adaptive, or gradient",
     )
-    return parser.parse_args()
 
 
-def main():
-    args = parse_args()
+def run_detect(args: argparse.Namespace) -> None:
+    """Run frame detection on an image."""
+    import cv2
+
+    from .detection import crop_frame, detect_frame_bounds
+    from .exceptions import FrameDetectionError, ImageReadError
+    from .filters import EdgeFilter
+    from .models import FilmType, Margins
+    from .separation import SeparationMethod
 
     # Determine error output path (used if --output is set)
     error_output = args.output if args.output else None
@@ -257,6 +255,88 @@ def main():
             )
 
         cv2.imwrite(output_path, crop)
+
+
+def run_install_shortcuts(args: argparse.Namespace) -> None:
+    """Install keyboard shortcuts."""
+    from .shortcuts import install_shortcuts
+
+    success = install_shortcuts()
+    sys.exit(0 if success else 1)
+
+
+def run_uninstall_shortcuts(args: argparse.Namespace) -> None:
+    """Uninstall keyboard shortcuts."""
+    from .shortcuts import uninstall_shortcuts
+
+    success = uninstall_shortcuts()
+    sys.exit(0 if success else 1)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Film negative frame detection and cropping tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  negative-auto-crop image.jpg                  Detect and crop frame
+  negative-auto-crop image.jpg --coords -o out.txt  Output coordinates
+  negative-auto-crop install shortcuts          Install Lightroom shortcuts
+  negative-auto-crop uninstall shortcuts        Remove Lightroom shortcuts
+""",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    # detect subcommand (explicit)
+    detect_parser = subparsers.add_parser(
+        "detect",
+        help="Detect and crop frame from image",
+    )
+    add_detect_arguments(detect_parser)
+    detect_parser.set_defaults(func=run_detect)
+
+    # install subcommand
+    install_parser = subparsers.add_parser("install", help="Install components")
+    install_subparsers = install_parser.add_subparsers(dest="target")
+    shortcuts_install = install_subparsers.add_parser(
+        "shortcuts",
+        help="Install Lightroom keyboard shortcuts (macOS only)",
+    )
+    shortcuts_install.set_defaults(func=run_install_shortcuts)
+
+    # uninstall subcommand
+    uninstall_parser = subparsers.add_parser("uninstall", help="Uninstall components")
+    uninstall_subparsers = uninstall_parser.add_subparsers(dest="target")
+    shortcuts_uninstall = uninstall_subparsers.add_parser(
+        "shortcuts",
+        help="Remove Lightroom keyboard shortcuts (macOS only)",
+    )
+    shortcuts_uninstall.set_defaults(func=run_uninstall_shortcuts)
+
+    # Parse known args first to handle default detection behavior
+    args, remaining = parser.parse_known_args()
+
+    # If no subcommand, check if first arg looks like a file (default to detect)
+    if args.command is None:
+        if remaining and not remaining[0].startswith("-"):
+            # Assume it's an image file - run detect
+            detect_args = ["detect"] + sys.argv[1:]
+            args = parser.parse_args(detect_args)
+            run_detect(args)
+        else:
+            parser.print_help()
+            sys.exit(1)
+    elif hasattr(args, "func"):
+        args.func(args)
+    else:
+        # Subcommand without target (e.g., "install" without "shortcuts")
+        if args.command == "install":
+            install_parser.print_help()
+        elif args.command == "uninstall":
+            uninstall_parser.print_help()
+        else:
+            parser.print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
