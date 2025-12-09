@@ -279,8 +279,8 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  negative-auto-crop image.jpg                  Detect and crop frame
-  negative-auto-crop image.jpg --coords -o out.txt  Output coordinates
+  negative-auto-crop detect image.jpg                  Detect and crop frame
+  negative-auto-crop detect image.jpg --coords -o out.txt  Output coordinates
   negative-auto-crop install shortcuts          Install Lightroom shortcuts
   negative-auto-crop uninstall shortcuts        Remove Lightroom shortcuts
 """,
@@ -313,19 +313,11 @@ Examples:
     )
     shortcuts_uninstall.set_defaults(func=run_uninstall_shortcuts)
 
-    # Parse known args first to handle default detection behavior
-    args, remaining = parser.parse_known_args()
+    args = parser.parse_args()
 
-    # If no subcommand, check if first arg looks like a file (default to detect)
     if args.command is None:
-        if remaining and not remaining[0].startswith("-"):
-            # Assume it's an image file - run detect
-            detect_args = ["detect"] + sys.argv[1:]
-            args = parser.parse_args(detect_args)
-            run_detect(args)
-        else:
-            parser.print_help()
-            sys.exit(1)
+        parser.print_help()
+        sys.exit(1)
     elif hasattr(args, "func"):
         args.func(args)
     else:

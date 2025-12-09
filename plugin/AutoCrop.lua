@@ -290,7 +290,7 @@ local function processPhotos(photos, settings)
 				args = args .. " --debug-dir " .. '"' .. fixPath(debugOutputPath) .. '"'
 			end
 
-			local cmd = '"' .. commandPath .. '" ' .. args
+			local cmd = '"' .. commandPath .. '" detect ' .. args
 			log:trace("Executing: " .. cmd)
 
 			local exitCode = LrTasks.execute(cmd)
