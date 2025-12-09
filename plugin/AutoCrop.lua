@@ -11,6 +11,7 @@ local LrPathUtils = import("LrPathUtils")
 local LrProgressScope = import("LrProgressScope")
 local LrTasks = import("LrTasks")
 
+local JSON = require("JSON")
 local Paths = require("Paths")
 
 local log = LrLogger("AutoCrop")
@@ -149,6 +150,50 @@ local function rotateCropForOrientation(crop, orientation)
 	}
 end
 
+-- Build filter config JSON from settings
+local function buildFilterConfig(settings)
+	local config = {
+		edge_filter = {
+			method = settings.edgeFilter or "scharr",
+		},
+		separation = {
+			method = settings.separationMethod or "color_distance",
+			tolerance = settings.tolerance or 30,
+		},
+	}
+
+	-- Add edge filter specific parameters
+	local filter = settings.edgeFilter or "scharr"
+	if filter == "canny" then
+		config.edge_filter.low_threshold = settings.cannyLow or 50
+		config.edge_filter.high_threshold = settings.cannyHigh or 150
+	elseif filter == "sobel" then
+		config.edge_filter.blur_size = settings.sobelBlurSize or 5
+	elseif filter == "scharr" then
+		config.edge_filter.blur_size = settings.scharrBlurSize or 5
+	elseif filter == "laplacian" then
+		config.edge_filter.blur_size = settings.laplacianBlurSize or 5
+	elseif filter == "dog" then
+		config.edge_filter.sigma1 = settings.dogSigma1 or 1.0
+		config.edge_filter.sigma2 = settings.dogSigma2 or 2.0
+	elseif filter == "log" then
+		config.edge_filter.sigma = settings.logSigma or 2.0
+	end
+
+	-- Add separation method specific parameters
+	local sep = settings.separationMethod or "color_distance"
+	if sep == "clahe" then
+		config.separation.clip_limit = settings.claheClipLimit or 1.0
+		config.separation.tile_size = settings.claheTileSize or 32
+	elseif sep == "adaptive" then
+		config.separation.block_size = settings.adaptiveBlockSize or 51
+	elseif sep == "gradient" then
+		config.separation.gradient_weight = settings.gradientWeight or 0.5
+	end
+
+	return config
+end
+
 local function processPhotos(photos, settings)
 	settings = settings or {}
 	local aspectRatio = settings.aspectRatio or "2:3"
@@ -168,6 +213,14 @@ local function processPhotos(photos, settings)
 	local logPath = settings.logPath or _PLUGIN.path
 	local commandPath = settings.commandPath
 
+	-- Build filter config
+	local filterConfig = buildFilterConfig(settings)
+	local filterConfigJson, jsonErr = JSON.encode(filterConfig)
+	if not filterConfigJson then
+		LrDialogs.message("Configuration Error", "Failed to encode filter config: " .. (jsonErr or "unknown"), "critical")
+		return
+	end
+
 	-- Check if command is available
 	if not commandPath then
 		LrDialogs.message(
@@ -184,6 +237,17 @@ local function processPhotos(photos, settings)
 	-- Start backup flow (async) and create temp directory for this run
 	Paths.startBackupFlow()
 	local renderTempPath = Paths.createRenderTemp()
+
+	-- Write filter config to temp file
+	local filterConfigPath = LrPathUtils.child(renderTempPath, "filter_config.json")
+	local configFile = io.open(filterConfigPath, "w")
+	if configFile then
+		configFile:write(filterConfigJson)
+		configFile:close()
+	else
+		LrDialogs.message("Configuration Error", "Failed to write filter config file", "critical")
+		return
+	end
 
 	-- Reset crops for all photos if requested (before export starts)
 	if resetCrop then
@@ -285,6 +349,9 @@ local function processPhotos(photos, settings)
 				.. edgeMargin
 				.. " --ignore-margin "
 				.. ignoreMargin
+				.. ' --filter-config "'
+				.. fixPath(filterConfigPath)
+				.. '"'
 
 			if debug then
 				args = args .. " --debug-dir " .. '"' .. fixPath(debugOutputPath) .. '"'

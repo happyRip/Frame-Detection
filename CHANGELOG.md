@@ -22,7 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - New "Filters" tab in Lightroom plugin dialog with:
   - Edge filter selection and parameter tuning
   - Separation method selection and parameter tuning
-  - Preview button placeholder for future live preview feature
+  - Live preview: generates debug visualization with current settings
 
 ## [0.0.6] - 2025-12-09
 

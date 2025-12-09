@@ -3,6 +3,7 @@
 local LrApplication = import("LrApplication")
 local LrBinding = import("LrBinding")
 local LrDialogs = import("LrDialogs")
+local LrExportSession = import("LrExportSession")
 local LrFileUtils = import("LrFileUtils")
 local LrFunctionContext = import("LrFunctionContext")
 local LrPathUtils = import("LrPathUtils")
@@ -12,6 +13,8 @@ local LrView = import("LrView")
 
 local AutoCrop = require("AutoCrop")
 local Info = require("Info")
+local JSON = require("JSON")
+local Paths = require("Paths")
 local Settings = require("Settings")
 
 -- Version string from Info.lua
@@ -835,9 +838,179 @@ local function showDialog()
 			end)
 		end
 
+		-- Generate preview with current filter settings
+		local function generatePreview()
+			LrTasks.startAsyncTask(function()
+				local catalog = LrApplication.activeCatalog()
+				local photo = catalog:getTargetPhoto()
+
+				if not photo then
+					LrDialogs.message("No photo selected", "Please select a photo to preview.", "info")
+					return
+				end
+
+				if not props.commandPath then
+					LrDialogs.message(
+						"negative-auto-crop not found",
+						"Please install negative-auto-crop via Homebrew.",
+						"critical"
+					)
+					return
+				end
+
+				-- Build filter config JSON
+				local filterConfig = {
+					edge_filter = {
+						method = props.edgeFilter,
+					},
+					separation = {
+						method = props.separationMethod,
+						tolerance = props.tolerance,
+					},
+				}
+
+				-- Add edge filter specific parameters
+				if props.edgeFilter == "canny" then
+					filterConfig.edge_filter.low_threshold = props.cannyLow
+					filterConfig.edge_filter.high_threshold = props.cannyHigh
+				elseif props.edgeFilter == "sobel" then
+					filterConfig.edge_filter.blur_size = props.sobelBlurSize
+				elseif props.edgeFilter == "scharr" then
+					filterConfig.edge_filter.blur_size = props.scharrBlurSize
+				elseif props.edgeFilter == "laplacian" then
+					filterConfig.edge_filter.blur_size = props.laplacianBlurSize
+				elseif props.edgeFilter == "dog" then
+					filterConfig.edge_filter.sigma1 = props.dogSigma1
+					filterConfig.edge_filter.sigma2 = props.dogSigma2
+				elseif props.edgeFilter == "log" then
+					filterConfig.edge_filter.sigma = props.logSigma
+				end
+
+				-- Add separation method specific parameters
+				if props.separationMethod == "clahe" then
+					filterConfig.separation.clip_limit = props.claheClipLimit
+					filterConfig.separation.tile_size = props.claheTileSize
+				elseif props.separationMethod == "adaptive" then
+					filterConfig.separation.block_size = props.adaptiveBlockSize
+				elseif props.separationMethod == "gradient" then
+					filterConfig.separation.gradient_weight = props.gradientWeight
+				end
+
+				local configJson, jsonErr = JSON.encode(filterConfig)
+				if not configJson then
+					LrDialogs.message("Error", "Failed to encode filter config: " .. (jsonErr or "unknown"), "critical")
+					return
+				end
+
+				-- Create temp directory for preview
+				local tempDir = Paths.createRenderTemp()
+				local previewPath = LrPathUtils.child(tempDir, "preview.jpg")
+				local debugDir = LrPathUtils.child(tempDir, "debug")
+				LrFileUtils.createDirectory(debugDir)
+
+				-- Export current photo
+				local progressScope = LrDialogs.showModalProgressDialog({
+					title = "Generating Preview",
+					caption = "Exporting photo...",
+					cannotCancel = true,
+				})
+
+				LrFunctionContext.callWithContext("previewExport", function(exportContext)
+					local exportSession = LrExportSession({
+						photosToExport = { photo },
+						exportSettings = {
+							LR_collisionHandling = "rename",
+							LR_export_bitDepth = "8",
+							LR_export_colorSpace = "sRGB",
+							LR_export_destinationPathPrefix = tempDir,
+							LR_export_destinationType = "specificFolder",
+							LR_export_useSubfolder = false,
+							LR_format = "JPEG",
+							LR_jpeg_quality = 0.8,
+							LR_minimizeEmbeddedMetadata = true,
+							LR_outputSharpeningOn = false,
+							LR_reimportExportedPhoto = false,
+							LR_renamingTokensOn = true,
+							LR_size_doConstrain = true,
+							LR_size_doNotEnlarge = true,
+							LR_size_maxHeight = 1500,
+							LR_size_maxWidth = 1500,
+							LR_size_units = "pixels",
+							LR_tokens = "preview",
+							LR_useWatermark = false,
+						},
+					})
+
+					for _, rendition in exportSession:renditions() do
+						rendition:waitForRender()
+						previewPath = rendition.destinationPath
+					end
+				end)
+
+				progressScope:setCaption("Running detection...")
+
+				-- Write config to temp file (more reliable than escaping inline JSON)
+				local configPath = LrPathUtils.child(tempDir, "filter_config.json")
+				local configFile = io.open(configPath, "w")
+				if configFile then
+					configFile:write(configJson)
+					configFile:close()
+				end
+
+				-- Build command with --debug-dir for visualization
+				local cmd = '"'
+					.. props.commandPath
+					.. '" detect "'
+					.. previewPath
+					.. '" --debug-dir "'
+					.. debugDir
+					.. '" --filter-config "'
+					.. configPath
+					.. '" --ratio '
+					.. (props.aspectRatio == "custom" and props.customAspectRatio or props.aspectRatio)
+					.. " --film-type "
+					.. props.filmType
+
+				local exitCode = LrTasks.execute(cmd)
+				progressScope:done()
+
+				if exitCode ~= 0 then
+					-- Check for error file
+					local errorPath = previewPath .. ".txt.err"
+					local errorMsg = "Detection failed (exit code: " .. exitCode .. ")"
+					if LrFileUtils.exists(errorPath) then
+						local content = LrFileUtils.readFile(errorPath)
+						if content then
+							errorMsg = content:gsub("^%s*(.-)%s*$", "%1")
+						end
+					end
+					LrDialogs.message("Preview Error", errorMsg, "critical")
+					return
+				end
+
+				-- Find and open the debug visualization image
+				local debugImages = {}
+				for file in LrFileUtils.files(debugDir) do
+					if file:match("%.png$") or file:match("%.jpg$") then
+						table.insert(debugImages, file)
+					end
+				end
+
+				if #debugImages > 0 then
+					-- Sort to get the last one (typically the final visualization)
+					table.sort(debugImages)
+					local lastImage = debugImages[#debugImages]
+					LrShell.openFilesInApp({ lastImage }, "open")
+				else
+					LrDialogs.message("Preview", "Detection completed but no debug images were generated.", "info")
+				end
+			end)
+		end
+
 		-- Build UI
 		local contents = f:tab_view({
 			buildCropSettingsTab(f, props, restoreDefaults, runAutoCrop, navigatePrev, navigateNext),
+			buildFiltersTab(f, props, generatePreview),
 			buildDebugTab(f, props),
 			buildAboutTab(f),
 		})
