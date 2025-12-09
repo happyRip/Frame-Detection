@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.0.6] - 2025-12-09
+
 ### Changed
 - CLI now requires explicit `detect` subcommand for frame detection
 
