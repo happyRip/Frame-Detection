@@ -34,9 +34,6 @@ end
 -- Enable logging by default
 configureLogging(true, _PLUGIN.path)
 
--- System command (installed via Homebrew)
-local commandTemplate = "negative-auto-crop __ARGS__"
-
 -- Initialize paths on module load
 LrTasks.startAsyncTask(function()
 	Paths.init()
@@ -169,6 +166,17 @@ local function processPhotos(photos, settings)
 		logEnabled = true
 	end
 	local logPath = settings.logPath or _PLUGIN.path
+	local commandPath = settings.commandPath
+
+	-- Check if command is available
+	if not commandPath then
+		LrDialogs.message(
+			"negative-auto-crop not found",
+			"Please install negative-auto-crop via Homebrew:\n\nbrew install USER/negative-auto-crop/negative-auto-crop",
+			"critical"
+		)
+		return
+	end
 
 	-- Configure logging
 	configureLogging(logEnabled, logPath)
@@ -282,7 +290,7 @@ local function processPhotos(photos, settings)
 				args = args .. " --debug-dir " .. '"' .. fixPath(debugOutputPath) .. '"'
 			end
 
-			local cmd = commandTemplate:gsub("__ARGS__", args)
+			local cmd = '"' .. commandPath .. '" ' .. args
 			log:trace("Executing: " .. cmd)
 
 			local exitCode = LrTasks.execute(cmd)

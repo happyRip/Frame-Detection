@@ -1,5 +1,6 @@
 -- Settings storage for AutoCrop plugin
 
+local LrFileUtils = import("LrFileUtils")
 local LrPrefs = import("LrPrefs")
 
 local Paths = require("Paths")
@@ -7,6 +8,22 @@ local Paths = require("Paths")
 -- Default paths
 local DEFAULT_DEBUG_PATH = Paths.debug
 local DEFAULT_LOG_PATH = _PLUGIN.path
+
+-- Homebrew install locations
+local HOMEBREW_PATHS = {
+	"/opt/homebrew/bin/negative-auto-crop", -- Apple Silicon
+	"/usr/local/bin/negative-auto-crop", -- Intel
+}
+
+-- Find the command path
+local function findCommandPath()
+	for _, path in ipairs(HOMEBREW_PATHS) do
+		if LrFileUtils.exists(path) then
+			return path
+		end
+	end
+	return nil
+end
 
 -- Default settings
 local DEFAULTS = {
@@ -23,6 +40,7 @@ local DEFAULTS = {
 	debugPath = DEFAULT_DEBUG_PATH,
 	logEnabled = true,
 	logPath = DEFAULT_LOG_PATH,
+	commandPath = nil, -- Auto-discovered
 }
 
 -- Get preferences table
@@ -38,6 +56,15 @@ local function load()
 			settings[key] = defaultValue
 		end
 	end
+
+	-- Auto-discover command path if not set or invalid
+	if not settings.commandPath or not LrFileUtils.exists(settings.commandPath) then
+		settings.commandPath = findCommandPath()
+		if settings.commandPath then
+			prefs.commandPath = settings.commandPath
+		end
+	end
+
 	return settings
 end
 

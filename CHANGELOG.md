@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 - CLI no longer requires OpenCV for `install`/`uninstall` commands (lazy imports)
 
+### Added
+- Auto-discovery of `negative-auto-crop` command from Homebrew locations
+- Configurable command path in plugin Debug settings
+
 ## [0.0.3] - 2025-12-09
 
 ### Changed
