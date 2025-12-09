@@ -219,7 +219,7 @@ local function processPhotos(photos, settings)
 	end
 
 	-- Check if command is available
-	if not commandPath then
+	if not commandPath or commandPath == "" then
 		LrDialogs.message(
 			"negative-auto-crop not found",
 			"Please install negative-auto-crop via Homebrew:\n\nbrew install USER/negative-auto-crop/negative-auto-crop",

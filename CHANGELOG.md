@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `auto` - auto-detect (default)
 - Plugin: New "Sprocket type" setting in Film tab
 
+### Fixed
+- Plugin: Auto Crop button now correctly uses custom command path setting
+
 ## [0.0.8] - 2025-12-09
 
 ### Changed

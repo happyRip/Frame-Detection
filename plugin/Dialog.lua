@@ -989,9 +989,11 @@ local function showDialog()
 				end
 
 				-- Build settings from current props
+				-- Use Settings.DEFAULTS keys to ensure all settings are copied
+				-- (pairs() may not enumerate all LrBinding property table keys)
 				local settings = {}
-				for key, value in pairs(props) do
-					settings[key] = value
+				for key, _ in pairs(Settings.DEFAULTS) do
+					settings[key] = props[key]
 				end
 
 				-- Use custom aspect ratio if selected
@@ -1050,7 +1052,7 @@ local function showDialog()
 					return
 				end
 
-				if not props.commandPath then
+				if not props.commandPath or props.commandPath == "" then
 					LrDialogs.message(
 						"negative-auto-crop not found",
 						"Please install negative-auto-crop via Homebrew.",
