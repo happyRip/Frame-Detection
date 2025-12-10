@@ -174,6 +174,10 @@ local function buildFilterConfig(settings)
 		separation = {
 			method = settings.separationMethod or "color_distance",
 			tolerance = settings.tolerance or 30,
+			-- Adaptive tolerance settings
+			adaptive_min = settings.adaptiveMin or 10,
+			adaptive_max = settings.adaptiveMax or 30,
+			gradient_tolerance = settings.gradientTolerance or false,
 		},
 	}
 

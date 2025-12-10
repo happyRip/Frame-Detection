@@ -229,6 +229,33 @@ class FilmCutEnd:
 
 
 @dataclass
+class FilmBaseResult:
+    """Result of film base color detection with variance analysis.
+
+    Contains the detected film base color along with variance statistics
+    used for adaptive tolerance calculation.
+    """
+
+    color: np.ndarray
+    """BGR median color of the film base."""
+
+    variance: float
+    """Combined color variance (Euclidean norm of channel stddevs)."""
+
+    iqr: np.ndarray
+    """Per-channel IQR (interquartile range) [B, G, R]."""
+
+    sample_count: int
+    """Number of samples used after outlier rejection."""
+
+    suggested_tolerance: int
+    """Adaptive tolerance based on variance."""
+
+    outlier_mask: np.ndarray
+    """Mask of filtered outlier pixels (large regions only, no dust)."""
+
+
+@dataclass
 class FrameBounds:
     """Represents detected frame boundaries."""
 
@@ -400,6 +427,9 @@ class SeparationConfig:
 
     method: str = "color_distance"
     tolerance: int = 30
+    adaptive_min: int = 10
+    adaptive_max: int = 30
+    gradient_tolerance: bool = False
     clahe: ClaheParams = field(default_factory=ClaheParams)
     adaptive: AdaptiveParams = field(default_factory=AdaptiveParams)
     gradient: GradientSepParams = field(default_factory=GradientSepParams)
@@ -418,13 +448,27 @@ class SeparationConfig:
             raise ValueError(f"separation.method must be one of {valid_methods}")
         if not (0 <= self.tolerance <= 255):
             raise ValueError(f"separation.tolerance must be 0-255, got {self.tolerance}")
+        if not (1 <= self.adaptive_min <= 100):
+            raise ValueError(f"separation.adaptive_min must be 1-100, got {self.adaptive_min}")
+        if not (1 <= self.adaptive_max <= 100):
+            raise ValueError(f"separation.adaptive_max must be 1-100, got {self.adaptive_max}")
+        if self.adaptive_min > self.adaptive_max:
+            raise ValueError(
+                f"separation.adaptive_min ({self.adaptive_min}) must be <= "
+                f"adaptive_max ({self.adaptive_max})"
+            )
         # Validate method-specific params if applicable
         if self.method in ("clahe", "adaptive", "gradient"):
             getattr(self, self.method).validate()
 
     def get_params(self) -> dict[str, Any]:
         """Get parameters for the selected method, including tolerance."""
-        params: dict[str, Any] = {"tolerance": self.tolerance}
+        params: dict[str, Any] = {
+            "tolerance": self.tolerance,
+            "adaptive_min": self.adaptive_min,
+            "adaptive_max": self.adaptive_max,
+            "gradient_tolerance": self.gradient_tolerance,
+        }
         if self.method in ("clahe", "adaptive", "gradient"):
             params.update(asdict(getattr(self, self.method)))
         return params
@@ -470,6 +514,12 @@ class FilterConfig:
                 config.separation.method = sep["method"]
             if "tolerance" in sep:
                 config.separation.tolerance = sep["tolerance"]
+            if "adaptive_min" in sep:
+                config.separation.adaptive_min = sep["adaptive_min"]
+            if "adaptive_max" in sep:
+                config.separation.adaptive_max = sep["adaptive_max"]
+            if "gradient_tolerance" in sep:
+                config.separation.gradient_tolerance = sep["gradient_tolerance"]
             for method in ["clahe", "adaptive", "gradient"]:
                 if method in sep:
                     for key, value in sep[method].items():

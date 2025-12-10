@@ -6,9 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Adaptive tolerance based on film base color variance using IQR (interquartile range)
+  - Tolerance automatically adjusts based on film base consistency
+  - Configurable min/max range via `--adaptive-min` (default: 10) and `--adaptive-max` (default: 30)
+  - Lower variance film bases get tighter tolerance for cleaner masks
+- Gradient tolerance option (`--gradient-tolerance`)
+  - Tolerance is 0 at image center and increases to max at edges
+  - Helps prevent false matches in the frame area
+- Adaptive tolerance controls in Filters > Film Base tab
+  - Min/Max sliders for adaptive tolerance range
+  - Gradient tolerance checkbox
+
 ### Fixed
 
 - Preview now resets crop before generating when "Reset crop" setting is enabled
+- Plugin filter config values no longer overwritten by CLI defaults
 
 ## [0.0.9] - 2025-12-09
 

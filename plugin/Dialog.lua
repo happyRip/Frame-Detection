@@ -339,6 +339,16 @@ local function buildFiltersTab(f, props, generatePreview, generateEdgePreview, g
 		props.tolerance = Settings.DEFAULTS.tolerance
 	end
 
+	-- Reset adaptive min to default
+	local function resetAdaptiveMin()
+		props.adaptiveMin = Settings.DEFAULTS.adaptiveMin
+	end
+
+	-- Reset adaptive max to default
+	local function resetAdaptiveMax()
+		props.adaptiveMax = Settings.DEFAULTS.adaptiveMax
+	end
+
 	return f:tab_view_item({
 		title = "Filters",
 		identifier = "filters",
@@ -397,6 +407,87 @@ local function buildFiltersTab(f, props, generatePreview, generateEdgePreview, g
 								tooltip = "Color distance tolerance (1-100). Higher values include more pixels as film base.",
 							}),
 						}),
+
+						-- Adaptive tolerance section
+						f:spacer({ height = 5 }),
+						f:static_text({
+							title = "Adaptive Tolerance",
+							font = "<system/small/bold>",
+						}),
+
+						-- Adaptive min slider
+						f:row({
+							f:static_text({
+								title = "Min",
+								width = LABEL_WIDTH - 20,
+								alignment = "right",
+							}),
+							f:push_button({
+								title = "↺",
+								width = 20,
+								action = resetAdaptiveMin,
+								tooltip = "Reset to default",
+							}),
+							f:slider({
+								value = LrView.bind("adaptiveMin"),
+								min = 1,
+								max = 50,
+								integral = true,
+								width = SLIDER_WIDTH,
+							}),
+							f:edit_field({
+								value = LrView.bind("adaptiveMin"),
+								width_in_digits = 3,
+								min = 1,
+								max = 50,
+								tooltip = "Minimum adaptive tolerance (used when film base has low variance).",
+							}),
+						}),
+
+						-- Adaptive max slider
+						f:row({
+							f:static_text({
+								title = "Max",
+								width = LABEL_WIDTH - 20,
+								alignment = "right",
+							}),
+							f:push_button({
+								title = "↺",
+								width = 20,
+								action = resetAdaptiveMax,
+								tooltip = "Reset to default",
+							}),
+							f:slider({
+								value = LrView.bind("adaptiveMax"),
+								min = 1,
+								max = 100,
+								integral = true,
+								width = SLIDER_WIDTH,
+							}),
+							f:edit_field({
+								value = LrView.bind("adaptiveMax"),
+								width_in_digits = 3,
+								min = 1,
+								max = 100,
+								tooltip = "Maximum adaptive tolerance (used when film base has high variance).",
+							}),
+						}),
+
+						-- Gradient tolerance checkbox
+						f:row({
+							f:static_text({
+								title = "Gradient",
+								width = LABEL_WIDTH,
+								alignment = "right",
+							}),
+							f:checkbox({
+								title = "Enable edge-distance gradient",
+								value = LrView.bind("gradientTolerance"),
+								tooltip = "When enabled, tolerance is 0 at image center and increases to max at edges. Useful for preventing false matches in the frame area.",
+							}),
+						}),
+
+						f:spacer({ height = 5 }),
 
 						-- Separation method parameter row 1 (dynamic label with reset)
 						f:row({
@@ -1093,6 +1184,10 @@ local function showDialog()
 					separation = {
 						method = props.separationMethod,
 						tolerance = props.tolerance,
+						-- Adaptive tolerance settings
+						adaptive_min = props.adaptiveMin,
+						adaptive_max = props.adaptiveMax,
+						gradient_tolerance = props.gradientTolerance,
 					},
 				}
 

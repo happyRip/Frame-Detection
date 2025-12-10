@@ -60,6 +60,11 @@ local DEFAULTS = {
 	adaptiveBlockSize = 51,
 	gradientWeight = 0.5,
 
+	-- Adaptive tolerance settings
+	adaptiveMin = 10,
+	adaptiveMax = 30,
+	gradientTolerance = false,
+
 	-- UI state (not persisted)
 	filterSubtab = "separation",
 }

@@ -1199,3 +1199,190 @@ class DebugVisualizer:
         self.step += 1
         fig.savefig(self.output_dir / f"{self.step:02d}_filter_comparison.png", dpi=150)
         plt.close(fig)
+
+    def save_film_base_variance(
+        self,
+        img: np.ndarray,
+        sample_mask: np.ndarray,
+        sampled_pixels: np.ndarray,
+        iqr: np.ndarray,
+        variance: float,
+        suggested_tolerance: int,
+        outlier_mask: np.ndarray,
+        raw_outlier_mask: np.ndarray | None = None,
+    ):
+        """Save variance analysis visualization for film base detection.
+
+        Args:
+            img: Original image
+            sample_mask: Mask showing sampled regions (255=sampled)
+            sampled_pixels: Array of sampled pixel values (N x 3 BGR)
+            iqr: Per-channel IQR values [B, G, R]
+            variance: Combined variance (Euclidean norm of per-channel stddev)
+            suggested_tolerance: Computed adaptive tolerance
+            outlier_mask: Filtered outlier mask (large regions only)
+            raw_outlier_mask: Optional raw outlier mask before filtering
+        """
+        import matplotlib.pyplot as plt
+
+        fig = plt.figure(figsize=(16, 10))
+
+        # Create grid layout
+        gs = fig.add_gridspec(3, 3, height_ratios=[2, 2, 1], hspace=0.3, wspace=0.3)
+
+        # Top left: Original image with outliers marked
+        ax1 = fig.add_subplot(gs[0, 0])
+        vis = img.copy()
+        # Mark outliers in red
+        if raw_outlier_mask is not None:
+            vis[raw_outlier_mask > 0] = (0, 0, 255)  # Red for raw outliers
+        vis[outlier_mask > 0] = (0, 255, 0)  # Green for filtered (large) outliers
+        ax1.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+        ax1.set_title("Outliers (red=all, green=large)")
+        ax1.axis("off")
+
+        # Top middle: Sample mask
+        ax2 = fig.add_subplot(gs[0, 1])
+        overlay = img.copy()
+        overlay[sample_mask > 0] = (255, 255, 0)  # Cyan for sampled areas
+        cv2.addWeighted(overlay, 0.5, img, 0.5, 0, overlay)
+        ax2.imshow(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB))
+        ax2.set_title("Sample Region")
+        ax2.axis("off")
+
+        # Top right: Filtered outlier mask
+        ax3 = fig.add_subplot(gs[0, 2])
+        ax3.imshow(outlier_mask, cmap="gray")
+        ax3.set_title("Filtered Outliers (edge hints)")
+        ax3.axis("off")
+
+        # Middle row: Per-channel histograms
+        colors = ["blue", "green", "red"]
+        channel_names = ["Blue", "Green", "Red"]
+
+        for i, (color, name) in enumerate(zip(colors, channel_names)):
+            ax = fig.add_subplot(gs[1, i])
+            channel_data = sampled_pixels[:, i]
+
+            # Compute quartiles
+            q1 = np.percentile(channel_data, 25)
+            q3 = np.percentile(channel_data, 75)
+            channel_iqr = q3 - q1
+            lower = q1 - 1.5 * channel_iqr
+            upper = q3 + 1.5 * channel_iqr
+
+            # Histogram
+            ax.hist(channel_data, bins=50, color=color, alpha=0.7, edgecolor="black")
+
+            # Mark IQR bounds
+            ax.axvline(q1, color="orange", linestyle="--", linewidth=2, label=f"Q1={q1:.0f}")
+            ax.axvline(q3, color="orange", linestyle="--", linewidth=2, label=f"Q3={q3:.0f}")
+            ax.axvline(lower, color="red", linestyle=":", linewidth=2, label=f"Lower={lower:.0f}")
+            ax.axvline(upper, color="red", linestyle=":", linewidth=2, label=f"Upper={upper:.0f}")
+
+            ax.set_title(f"{name} Channel (IQR={channel_iqr:.1f})")
+            ax.set_xlabel("Pixel Value")
+            ax.set_ylabel("Count")
+            ax.legend(fontsize=8)
+            ax.set_xlim(0, 255)
+
+        # Bottom: Statistics panel
+        ax_stats = fig.add_subplot(gs[2, :])
+        ax_stats.axis("off")
+
+        stats_text = (
+            f"Variance Analysis:\n"
+            f"  Combined IQR: {np.sqrt(np.sum(iqr ** 2)):.1f}  "
+            f"(B={iqr[0]:.1f}, G={iqr[1]:.1f}, R={iqr[2]:.1f})\n"
+            f"  Combined Variance (stddev): {variance:.1f}\n"
+            f"  Suggested Tolerance: {suggested_tolerance}\n"
+            f"  Sample Count: {len(sampled_pixels)}\n"
+            f"  Outlier Pixels (filtered): {np.sum(outlier_mask > 0)}"
+        )
+        ax_stats.text(
+            0.5, 0.5, stats_text,
+            transform=ax_stats.transAxes,
+            fontsize=12,
+            verticalalignment="center",
+            horizontalalignment="center",
+            fontfamily="monospace",
+            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+        )
+
+        fig.suptitle("Film Base Variance Analysis", fontsize=14, fontweight="bold")
+
+        self.step += 1
+        fig.savefig(self.output_dir / f"{self.step:02d}_film_base_variance.png", dpi=150)
+        plt.close(fig)
+
+    def save_tolerance_gradient(
+        self,
+        img: np.ndarray,
+        tolerance_map: np.ndarray,
+        max_tolerance: float,
+    ):
+        """Save gradient tolerance map visualization.
+
+        Args:
+            img: Original image
+            tolerance_map: Tolerance map (0 at center, max at edges)
+            max_tolerance: Maximum tolerance value
+        """
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+        # Left: Tolerance map heatmap
+        ax1 = axes[0]
+        im = ax1.imshow(tolerance_map, cmap="viridis", vmin=0, vmax=max_tolerance)
+        ax1.set_title("Tolerance Map")
+        ax1.axis("off")
+        plt.colorbar(im, ax=ax1, label="Tolerance", shrink=0.8)
+
+        # Middle: Overlay on original image
+        ax2 = axes[1]
+        # Normalize tolerance map to 0-1 for alpha blending
+        alpha = tolerance_map / max(max_tolerance, 1)
+        overlay = img.copy().astype(np.float32)
+        # Create colored overlay (yellow at edges)
+        color_overlay = np.zeros_like(overlay)
+        color_overlay[:, :, 2] = 255  # Red channel
+        color_overlay[:, :, 1] = 255  # Green channel -> Yellow
+        # Blend: more yellow where tolerance is higher
+        for c in range(3):
+            overlay[:, :, c] = (
+                overlay[:, :, c] * (1 - alpha * 0.5) + color_overlay[:, :, c] * alpha * 0.5
+            )
+        overlay = np.clip(overlay, 0, 255).astype(np.uint8)
+        ax2.imshow(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB))
+        ax2.set_title("Overlay (yellow = high tolerance)")
+        ax2.axis("off")
+
+        # Right: Cross-section profile
+        ax3 = axes[2]
+        h, w = tolerance_map.shape
+        # Horizontal cross-section through center
+        mid_y = h // 2
+        horizontal = tolerance_map[mid_y, :]
+        # Vertical cross-section through center
+        mid_x = w // 2
+        vertical = tolerance_map[:, mid_x]
+
+        ax3.plot(range(w), horizontal, label="Horizontal", color="blue")
+        ax3.plot(range(h), vertical, label="Vertical", color="red")
+        ax3.set_xlabel("Position (pixels)")
+        ax3.set_ylabel("Tolerance")
+        ax3.set_title("Cross-section Profiles")
+        ax3.legend()
+        ax3.set_ylim(0, max_tolerance * 1.1)
+        ax3.grid(True, alpha=0.3)
+
+        fig.suptitle(
+            f"Gradient Tolerance (max={max_tolerance:.0f}, center=0)",
+            fontsize=14, fontweight="bold"
+        )
+
+        fig.tight_layout()
+        self.step += 1
+        fig.savefig(self.output_dir / f"{self.step:02d}_tolerance_gradient.png", dpi=150)
+        plt.close(fig)

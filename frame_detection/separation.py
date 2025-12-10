@@ -24,20 +24,28 @@ def apply_color_distance(
     img: np.ndarray,
     film_base_color: np.ndarray,
     tolerance: int = 30,
+    tolerance_map: np.ndarray | None = None,
 ) -> np.ndarray:
     """Original method - Euclidean distance in BGR color space.
 
     Args:
         img: Input BGR image
         film_base_color: BGR color of the film base
-        tolerance: Color distance tolerance for matching
+        tolerance: Color distance tolerance for matching (scalar)
+        tolerance_map: Optional per-pixel tolerance map (overrides scalar if provided)
 
     Returns:
         Binary mask where film base regions are 255
     """
     diff = img.astype(np.float32) - film_base_color.astype(np.float32)
     distance = np.sqrt(np.sum(diff**2, axis=2))
-    mask = (distance <= tolerance).astype(np.uint8) * 255
+
+    if tolerance_map is not None:
+        # Per-pixel tolerance from gradient map
+        mask = (distance <= tolerance_map).astype(np.uint8) * 255
+    else:
+        # Scalar tolerance (original behavior)
+        mask = (distance <= tolerance).astype(np.uint8) * 255
     return mask
 
 
@@ -47,6 +55,7 @@ def apply_clahe(
     tolerance: int = 30,
     clip_limit: float = 1.0,
     tile_size: int = 32,
+    tolerance_map: np.ndarray | None = None,
 ) -> np.ndarray:
     """Apply CLAHE for local contrast enhancement before color matching.
 
@@ -60,6 +69,7 @@ def apply_clahe(
         tolerance: Color distance tolerance for matching
         clip_limit: CLAHE clip limit (higher = more contrast)
         tile_size: CLAHE tile grid size
+        tolerance_map: Optional per-pixel tolerance map
 
     Returns:
         Binary mask where film base regions are 255
@@ -100,7 +110,11 @@ def apply_clahe(
     # Apply color distance on enhanced image
     diff = img_enhanced.astype(np.float32) - film_base_enhanced.astype(np.float32)
     distance = np.sqrt(np.sum(diff**2, axis=2))
-    mask = (distance <= tolerance).astype(np.uint8) * 255
+
+    if tolerance_map is not None:
+        mask = (distance <= tolerance_map).astype(np.uint8) * 255
+    else:
+        mask = (distance <= tolerance).astype(np.uint8) * 255
     return mask
 
 
@@ -108,6 +122,7 @@ def apply_lab_distance(
     img: np.ndarray,
     film_base_color: np.ndarray,
     tolerance: int = 30,
+    tolerance_map: np.ndarray | None = None,
 ) -> np.ndarray:
     """Distance in LAB color space for perceptually uniform separation.
 
@@ -118,6 +133,7 @@ def apply_lab_distance(
         img: Input BGR image
         film_base_color: BGR color of the film base
         tolerance: Color distance tolerance for matching
+        tolerance_map: Optional per-pixel tolerance map
 
     Returns:
         Binary mask where film base regions are 255
@@ -133,8 +149,12 @@ def apply_lab_distance(
     distance = np.sqrt(np.sum(diff**2, axis=2))
 
     # LAB distances are typically larger, adjust tolerance
-    lab_tolerance = tolerance * 1.5
-    mask = (distance <= lab_tolerance).astype(np.uint8) * 255
+    if tolerance_map is not None:
+        lab_tolerance_map = tolerance_map * 1.5
+        mask = (distance <= lab_tolerance_map).astype(np.uint8) * 255
+    else:
+        lab_tolerance = tolerance * 1.5
+        mask = (distance <= lab_tolerance).astype(np.uint8) * 255
     return mask
 
 
@@ -142,6 +162,7 @@ def apply_hsv_distance(
     img: np.ndarray,
     film_base_color: np.ndarray,
     tolerance: int = 30,
+    tolerance_map: np.ndarray | None = None,
 ) -> np.ndarray:
     """Distance in HSV color space, weighted by saturation and value.
 
@@ -152,6 +173,7 @@ def apply_hsv_distance(
         img: Input BGR image
         film_base_color: BGR color of the film base
         tolerance: Color distance tolerance for matching
+        tolerance_map: Optional per-pixel tolerance map
 
     Returns:
         Binary mask where film base regions are 255
@@ -177,8 +199,12 @@ def apply_hsv_distance(
     )
 
     # HSV distances have different scale
-    hsv_tolerance = tolerance * 2
-    mask = (distance <= hsv_tolerance).astype(np.uint8) * 255
+    if tolerance_map is not None:
+        hsv_tolerance_map = tolerance_map * 2
+        mask = (distance <= hsv_tolerance_map).astype(np.uint8) * 255
+    else:
+        hsv_tolerance = tolerance * 2
+        mask = (distance <= hsv_tolerance).astype(np.uint8) * 255
     return mask
 
 
@@ -187,17 +213,22 @@ def apply_adaptive(
     film_base_color: np.ndarray,
     tolerance: int = 30,
     block_size: int = 51,
+    tolerance_map: np.ndarray | None = None,
 ) -> np.ndarray:
     """Adaptive thresholding on color distance map.
 
     Instead of a fixed tolerance, uses local adaptive thresholding
     which can handle varying lighting across the image.
 
+    Note: tolerance_map is accepted for API consistency but not used
+    since this method uses adaptive thresholding.
+
     Args:
         img: Input BGR image
         film_base_color: BGR color of the film base
         tolerance: Base tolerance (used to scale adaptive threshold)
         block_size: Block size for adaptive threshold (must be odd)
+        tolerance_map: Ignored (for API consistency)
 
     Returns:
         Binary mask where film base regions are 255
@@ -238,6 +269,7 @@ def apply_gradient(
     film_base_color: np.ndarray,
     tolerance: int = 30,
     gradient_weight: float = 0.5,
+    tolerance_map: np.ndarray | None = None,
 ) -> np.ndarray:
     """Gradient-enhanced separation using edge information.
 
@@ -249,6 +281,7 @@ def apply_gradient(
         film_base_color: BGR color of the film base
         tolerance: Color distance tolerance for matching
         gradient_weight: Weight for gradient contribution (0-1)
+        tolerance_map: Optional per-pixel tolerance map
 
     Returns:
         Binary mask where film base regions are 255
@@ -275,7 +308,10 @@ def apply_gradient(
     enhanced_distance = distance * (1 + gradient_norm * gradient_weight * 2)
 
     # Apply threshold
-    mask = (enhanced_distance <= tolerance).astype(np.uint8) * 255
+    if tolerance_map is not None:
+        mask = (enhanced_distance <= tolerance_map).astype(np.uint8) * 255
+    else:
+        mask = (enhanced_distance <= tolerance).astype(np.uint8) * 255
     return mask
 
 
@@ -296,6 +332,7 @@ def apply_separation(
     method: SeparationMethod,
     tolerance: int = 30,
     params: dict[str, Any] | None = None,
+    tolerance_map: np.ndarray | None = None,
 ) -> np.ndarray:
     """Apply the specified separation method.
 
@@ -303,21 +340,23 @@ def apply_separation(
         img: Input BGR image
         film_base_color: BGR color of the film base
         method: Which separation method to use
-        tolerance: Color distance tolerance for matching
+        tolerance: Color distance tolerance for matching (scalar)
         params: Optional dict of method-specific parameters. If None, uses defaults.
             - clahe: clip_limit (float), tile_size (int)
             - adaptive: block_size (int)
             - gradient: gradient_weight (float)
+        tolerance_map: Optional per-pixel tolerance map (overrides scalar if provided)
 
     Returns:
         Binary mask where film base regions are 255
     """
     fn = _SEPARATION_FUNCTIONS[method]
+    # Filter out tolerance and adaptive params that we handle separately
+    filter_keys = {"tolerance", "adaptive_min", "adaptive_max", "gradient_tolerance"}
     if params:
-        # Filter out tolerance from params if present (it's passed separately)
-        method_params = {k: v for k, v in params.items() if k != "tolerance"}
-        return fn(img, film_base_color, tolerance, **method_params)
-    return fn(img, film_base_color, tolerance)
+        method_params = {k: v for k, v in params.items() if k not in filter_keys}
+        return fn(img, film_base_color, tolerance, tolerance_map=tolerance_map, **method_params)
+    return fn(img, film_base_color, tolerance, tolerance_map=tolerance_map)
 
 
 def apply_all_separations(

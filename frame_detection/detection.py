@@ -16,6 +16,7 @@ from .exceptions import (
 from .filters import EdgeFilter, apply_filter
 from .models import (
     EdgeGroup,
+    FilmBaseResult,
     FilmCutEnd,
     FilmType,
     FilterConfig,
@@ -1115,13 +1116,19 @@ def detect_film_base_color(
     curve2: np.ndarray | None = None,
     aspect_ratio: float | None = None,
     inset_percent: float = 1.0,
+    adaptive_min: int = 10,
+    adaptive_max: int = 30,
     visualizer: DebugVisualizer | None = None,
-) -> np.ndarray:
-    """Detect film base color from unexposed regions.
+) -> FilmBaseResult:
+    """Detect film base color from unexposed regions with variance analysis.
 
     When sprocket curves are available, samples from sprocket regions
     (excluding holes). Otherwise, samples from outside a centered rectangle
     with the specified aspect ratio, inset by a percentage of the diagonal.
+
+    Computes variance statistics and rejects outliers (dust, light leaks)
+    using IQR-based filtering. Returns FilmBaseResult with color and variance
+    info for adaptive tolerance calculation.
 
     Args:
         img: Input image (normalized)
@@ -1131,10 +1138,12 @@ def detect_film_base_color(
         curve2: Fitted curve for bottom (horizontal) or right (vertical) boundary
         aspect_ratio: Aspect ratio (width/height) for inner rectangle (no sprockets)
         inset_percent: Diagonal inset percentage for inner rectangle (0-50)
+        adaptive_min: Minimum adaptive tolerance
+        adaptive_max: Maximum adaptive tolerance
         visualizer: Optional debug visualizer
 
     Returns:
-        Film base color as BGR numpy array of shape (3,)
+        FilmBaseResult with color, variance stats, and adaptive tolerance
     """
     img_h, img_w = img.shape[:2]
 
@@ -1215,16 +1224,141 @@ def detect_film_base_color(
         sample_mask[:, :edge_size] = 255  # Left
         sample_mask[:, img_w - edge_size :] = 255  # Right
 
-    # Extract sampled pixels and compute median color
+    # Extract sampled pixels
     sampled_pixels = img[sample_mask > 0]
-    film_base = np.median(sampled_pixels, axis=0).astype(np.uint8)
+
+    # Compute IQR for outlier detection
+    q1 = np.percentile(sampled_pixels, 25, axis=0)
+    q3 = np.percentile(sampled_pixels, 75, axis=0)
+    iqr = q3 - q1
+
+    # Define outlier bounds using 1.5 * IQR rule
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+
+    # Filter out outliers from sampled pixels for median calculation
+    inlier_mask = np.all(
+        (sampled_pixels >= lower_bound) & (sampled_pixels <= upper_bound),
+        axis=1
+    )
+    inlier_pixels = sampled_pixels[inlier_mask]
+
+    # Compute median from inliers (or all samples if too few inliers)
+    if len(inlier_pixels) >= min_samples:
+        film_base = np.median(inlier_pixels, axis=0).astype(np.uint8)
+        sample_count = len(inlier_pixels)
+    else:
+        film_base = np.median(sampled_pixels, axis=0).astype(np.uint8)
+        sample_count = len(sampled_pixels)
+
+    # Create outlier mask from sample region (for edge hints)
+    # Mark pixels that are outliers in ANY channel
+    raw_outlier_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    sample_coords = np.where(sample_mask > 0)
+    sample_pixel_values = img[sample_coords]
+
+    # Check each pixel against outlier bounds
+    is_outlier = np.any(
+        (sample_pixel_values < lower_bound) | (sample_pixel_values > upper_bound),
+        axis=1
+    )
+    outlier_coords = (sample_coords[0][is_outlier], sample_coords[1][is_outlier])
+    raw_outlier_mask[outlier_coords] = 255
+
+    # Filter out dust: keep only connected components >= min_area pixels
+    min_area = 50
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(raw_outlier_mask)
+    outlier_mask = np.zeros_like(raw_outlier_mask)
+    for i in range(1, num_labels):  # skip background (label 0)
+        if stats[i, cv2.CC_STAT_AREA] >= min_area:
+            outlier_mask[labels == i] = 255
+
+    # Compute combined variance (Euclidean norm of per-channel stddev)
+    if len(inlier_pixels) >= min_samples:
+        stddev = np.std(inlier_pixels, axis=0)
+    else:
+        stddev = np.std(sampled_pixels, axis=0)
+    variance = float(np.sqrt(np.sum(stddev ** 2)))
+
+    # Compute adaptive tolerance based on combined IQR
+    combined_iqr = float(np.sqrt(np.sum(iqr ** 2)))
+    suggested_tolerance = int(combined_iqr * 2.0)
+    suggested_tolerance = max(adaptive_min, min(adaptive_max, suggested_tolerance))
+
+    result = FilmBaseResult(
+        color=film_base,
+        variance=variance,
+        iqr=iqr.astype(np.float32),
+        sample_count=sample_count,
+        suggested_tolerance=suggested_tolerance,
+        outlier_mask=outlier_mask,
+    )
 
     if visualizer:
         visualizer.save_film_base(
             img, sample_mask, film_base, has_sprocket_regions, inset_percent, inner_rect
         )
+        # Save variance analysis visualization
+        visualizer.save_film_base_variance(
+            img,
+            sample_mask,
+            sampled_pixels,
+            iqr,
+            variance,
+            suggested_tolerance,
+            outlier_mask,
+            raw_outlier_mask,
+        )
 
-    return film_base
+    return result
+
+
+def create_tolerance_map(
+    img_shape: tuple[int, int],
+    max_tolerance: float,
+) -> np.ndarray:
+    """Create gradient tolerance map based on distance to nearest edge.
+
+    Creates a tolerance map where:
+    - At edges: tolerance = max_tolerance
+    - At center: tolerance = 0
+
+    Uses rectangle-aware distance (distance to nearest edge, not radial).
+
+    Args:
+        img_shape: Image dimensions (height, width)
+        max_tolerance: Maximum tolerance value at edges
+
+    Returns:
+        Tolerance map as float32 array with same shape as image
+    """
+    h, w = img_shape[:2]
+
+    # Distance to nearest edge (rectangle-aware)
+    y_dist = np.minimum(
+        np.arange(h)[:, None],
+        np.arange(h - 1, -1, -1)[:, None]
+    )
+    x_dist = np.minimum(
+        np.arange(w)[None, :],
+        np.arange(w - 1, -1, -1)[None, :]
+    )
+    edge_dist = np.minimum(y_dist, x_dist)
+
+    # Normalize: 0 at edge, 1 at center
+    max_dist = min(h, w) / 2
+    if max_dist > 0:
+        normalized_dist = edge_dist / max_dist
+        normalized_dist = np.clip(normalized_dist, 0, 1)
+    else:
+        normalized_dist = np.zeros((h, w))
+
+    # Invert: 1 at edge, 0 at center
+    edge_factor = 1 - normalized_dist
+
+    # Scale to max_tolerance
+    tolerance_map = (edge_factor * max_tolerance).astype(np.float32)
+    return tolerance_map
 
 
 def create_film_base_mask(
@@ -1234,23 +1368,33 @@ def create_film_base_mask(
     visualizer: DebugVisualizer | None = None,
     separation_method: SeparationMethod = SeparationMethod.COLOR_DISTANCE,
     separation_params: dict[str, Any] | None = None,
+    gradient_tolerance: bool = False,
 ) -> np.ndarray:
     """Create a mask of pixels that match the film base color.
 
     Args:
         img: Input image (normalized)
         film_base_color: BGR color of the film base
-        tolerance: Color distance tolerance for matching
+        tolerance: Color distance tolerance for matching (max tolerance if gradient enabled)
         visualizer: Optional debug visualizer
         separation_method: Method to use for separating film base from image
         separation_params: Optional dict of method-specific parameters
+        gradient_tolerance: If True, use edge-distance gradient (0 at center, max at edges)
 
     Returns:
         Binary mask where film base regions are 255
     """
+    # Create tolerance map if gradient enabled
+    tolerance_map = None
+    if gradient_tolerance:
+        tolerance_map = create_tolerance_map(img.shape[:2], tolerance)
+        if visualizer:
+            visualizer.save_tolerance_gradient(img, tolerance_map, tolerance)
+
     # Apply selected separation method
     film_base_mask = apply_separation(
-        img, film_base_color, separation_method, tolerance, separation_params
+        img, film_base_color, separation_method, tolerance, separation_params,
+        tolerance_map=tolerance_map
     )
 
     # Clean up with morphological operations
@@ -1363,6 +1507,7 @@ def detect_lines(
     cut_end: FilmCutEnd | None = None,
     sprocket_margin_percent: float = 0.0,
     edge_filter_params: dict[str, Any] | None = None,
+    outlier_mask: np.ndarray | None = None,
 ) -> tuple[list[Line], np.ndarray]:
     """Detect lines from film base mask boundaries using Hough transform.
 
@@ -1392,6 +1537,8 @@ def detect_lines(
         cut_end: Detected film cut ends to mask from edges
         sprocket_margin_percent: Additional percentage to mask beyond sprocket curves
         edge_filter_params: Optional dict of filter-specific parameters
+        outlier_mask: Optional mask of outlier regions (large regions only, not dust)
+            to use as additional edge hints
 
     Returns:
         Tuple of (list of detected Line objects, edges image)
@@ -1400,6 +1547,11 @@ def detect_lines(
 
     # Find edges of the film base mask (boundaries between frame and base)
     edges = apply_filter(film_base_mask, edge_filter, edge_filter_params)
+
+    # Combine with outlier mask edges if provided (large regions like light leaks)
+    if outlier_mask is not None and np.any(outlier_mask > 0):
+        outlier_edges = apply_filter(outlier_mask, edge_filter, edge_filter_params)
+        edges = cv2.bitwise_or(edges, outlier_edges)
 
     # Mask out sprocket regions from edges using curves
     if curve1 is not None or curve2 is not None:
@@ -1894,8 +2046,18 @@ def detect_frame_bounds(
     # Step 2: Normalize levels for better color detection
     img = normalize_levels(img, visualizer)
 
-    # Step 3: Detect film base color from normalized image
-    film_base_color = detect_film_base_color(
+    # Extract adaptive tolerance settings from separation config
+    if filter_config is not None:
+        adaptive_min = separation_params.pop("adaptive_min", 10)
+        adaptive_max = separation_params.pop("adaptive_max", 30)
+        gradient_tolerance = separation_params.pop("gradient_tolerance", False)
+    else:
+        adaptive_min = 10
+        adaptive_max = 30
+        gradient_tolerance = False
+
+    # Step 3: Detect film base color from normalized image with variance analysis
+    film_base_result = detect_film_base_color(
         img,
         sprocket_mask,
         orientation,
@@ -1903,17 +2065,23 @@ def detect_frame_bounds(
         sprocket_curve2,
         aspect_ratio,
         film_base_inset_percent,
+        adaptive_min,
+        adaptive_max,
         visualizer,
     )
+
+    # Use suggested tolerance from variance analysis
+    effective_tolerance = film_base_result.suggested_tolerance
 
     # Step 4: Create mask of film base regions
     film_base_mask = create_film_base_mask(
         img,
-        film_base_color,
-        tolerance=tolerance,
+        film_base_result.color,
+        tolerance=effective_tolerance,
         visualizer=visualizer,
         separation_method=separation_method,
         separation_params=separation_params,
+        gradient_tolerance=gradient_tolerance,
     )
 
     if visualizer:
@@ -1939,11 +2107,13 @@ def detect_frame_bounds(
     # Step 5: Detect lines from film base mask boundaries (in each margin region)
     # Pass original mask - edges will be masked using curves inside detect_lines
     # Use ratio-aware margins so the inner zone has the correct aspect ratio
+    # Also pass outlier_mask for additional edge hints (large regions like light leaks)
     lines, edges = detect_lines(
         img, film_base_mask, edge_margins, orientation,
         sprocket_curve1, sprocket_curve2, aspect_ratio,
         y_min, y_max, x_min, x_max, visualizer, edge_filter,
         cut_end, sprocket_margin_percent, edge_filter_params,
+        film_base_result.outlier_mask,
     )
 
     if visualizer:

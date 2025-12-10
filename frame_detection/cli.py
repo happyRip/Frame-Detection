@@ -141,6 +141,23 @@ def add_detect_arguments(parser: argparse.ArgumentParser) -> None:
         "hsv_distance, adaptive, or gradient",
     )
     parser.add_argument(
+        "--adaptive-min",
+        type=int,
+        default=10,
+        help="Minimum adaptive tolerance for film base matching (default: 10)",
+    )
+    parser.add_argument(
+        "--adaptive-max",
+        type=int,
+        default=30,
+        help="Maximum adaptive tolerance for film base matching (default: 30)",
+    )
+    parser.add_argument(
+        "--gradient-tolerance",
+        action="store_true",
+        help="Enable gradient tolerance (0 at center, max at edges)",
+    )
+    parser.add_argument(
         "--filter-config",
         help="JSON filter configuration (inline JSON string or path to .json file). "
         "Overrides --edge-filter and --separation-method if provided.",
@@ -252,6 +269,25 @@ def run_detect(args: argparse.Namespace) -> None:
 
     # Parse filter config (overrides edge_filter and separation_method if provided)
     filter_config = parse_filter_config(getattr(args, "filter_config", None))
+
+    if filter_config is None:
+        # No filter config from JSON - create one with CLI options
+        from .models import EdgeFilterConfig, FilterConfig, SeparationConfig
+
+        adaptive_min = getattr(args, "adaptive_min", 10)
+        adaptive_max = getattr(args, "adaptive_max", 30)
+        gradient_tolerance = getattr(args, "gradient_tolerance", False)
+
+        filter_config = FilterConfig(
+            edge_filter=EdgeFilterConfig(method=args.edge_filter),
+            separation=SeparationConfig(
+                method=args.separation_method,
+                adaptive_min=adaptive_min,
+                adaptive_max=adaptive_max,
+                gradient_tolerance=gradient_tolerance,
+            ),
+        )
+    # else: filter_config from JSON already contains adaptive tolerance settings
 
     # Keep a copy of original image for debug visualization
     img_original = img.copy() if visualizer else None
