@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.0.10] - 2025-12-11
+
 ### Added
 
 - Adaptive tolerance based on film base color variance using IQR (interquartile range)
